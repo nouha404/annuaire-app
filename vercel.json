@@ -1,8 +1,19 @@
 {
-  "functions": {
-    "api/scrape.ts": {
-      "maxDuration": 60,
-      "memory": 1024
+  "version": 2,
+  "builds": [
+    {
+      "src": "server.ts",
+      "use": "@vercel/node"
     }
-  }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "server.ts"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/dist/annuaire-app/browser/$1"
+    }
+  ]
 }

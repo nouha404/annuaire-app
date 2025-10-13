@@ -1,7 +1,7 @@
 <div class="min-h-screen bg-slate-50">
   <header class="px-6 py-4 bg-white shadow sticky top-0 z-10">
-    <h1 class="text-2xl font-semibold">🕵️ get-infos (API officielle)</h1>
-    <p class="text-sm text-slate-500">Opendatasoft Explore v2.1</p>
+    <h1 class="text-2xl font-semibold">🕵️ get-infos (Scraping Service-Public)</h1>
+    <p class="text-sm text-slate-500">Selenium + Express + Angular</p>
   </header>
 
   <main class="px-6 py-6 max-w-6xl mx-auto">
@@ -20,29 +20,21 @@
                placeholder="Ex: Paris ou 75001">
       </div>
 
-      <div class="md:col-span-3 flex gap-2">
-        <button [disabled]="loading" class="flex-1 rounded-xl px-4 py-2 bg-blue-600 text-white">
+      <div class="md:col-span-3 flex flex-wrap gap-2">
+        <button [disabled]="loading" class="flex-1 rounded-xl px-4 py-2 bg-blue-600 text-white" type="submit">
           {{ loading ? 'Recherche…' : 'Rechercher' }}
         </button>
         <button type="button" (click)="onExportCsv()" [disabled]="!rows.length || loading"
-                class="rounded-xl px-4 py-2 bg-emerald-600 text-white">CSV (API)</button>
+                class="rounded-xl px-4 py-2 bg-emerald-600 text-white">CSV</button>
         <button type="button" (click)="onExportXlsx()" [disabled]="!rows.length || loading"
                 class="rounded-xl px-4 py-2 bg-indigo-600 text-white">XLSX</button>
-                
-        <button type="button"
-              (click)="onExportCsvAll()"
-              [disabled]="loading"
-              class="rounded-xl px-4 py-2 bg-slate-800 text-white">
-        CSV (Tout)
-      </button>
-
       </div>
     </form>
 
-    <div *ngIf="error" class="mt-4 text-red-600">{{error}}</div>
+    <div *ngIf="error" class="mt-4 text-red-600 font-medium">{{error}}</div>
 
-    <div class="mt-4 text-slate-600" *ngIf="!loading">
-      <span class="text-sm">Résultats: {{rows.length}} / ~{{total}}</span>
+    <div *ngIf="!loading && !error" class="mt-4 text-slate-600">
+      <span class="text-sm">Résultats : {{rows.length}} / ~{{total}}</span>
     </div>
 
     <div class="mt-6 bg-white rounded-2xl shadow overflow-auto">
@@ -52,34 +44,39 @@
             <th class="text-left p-3">Nom</th>
             <th class="text-left p-3">Adresse</th>
             <th class="text-left p-3">Téléphone</th>
+            <th class="text-left p-3">Email</th>
             <th class="text-left p-3">Site</th>
-            <th class="text-left p-3">Commune</th>
+            <th class="text-left p-3">Région</th>
           </tr>
         </thead>
         <tbody>
-          <tr *ngFor="let r of rows" class="border-t">
+          <tr *ngFor="let r of rows" class="border-t hover:bg-slate-50">
             <td class="p-3">
-              <a [href]="r.url || '#'" target="_blank" class="text-blue-700 underline">{{r.nom}}</a>
+              <a [href]="r.url || '#'" target="_blank" class="text-blue-700 underline font-medium">{{r.nom}}</a>
             </td>
             <td class="p-3 whitespace-pre-line">{{r.adresse || '—'}}</td>
             <td class="p-3">
-              <a *ngIf="r.telephone" [href]="'tel:'+r.telephone" class="underline">{{r.telephone}}</a>
+              <a *ngIf="r.telephone" [href]="'tel:'+r.telephone" class="underline text-slate-700">{{r.telephone}}</a>
               <span *ngIf="!r.telephone">—</span>
             </td>
             <td class="p-3">
-              <a *ngIf="r.site_web" [href]="r.site_web" target="_blank" class="underline">{{r.site_web}}</a>
-              <span *ngIf="!r.site_web">—</span>
+              <a *ngIf="r.email" [href]="'mailto:'+r.email" class="underline text-slate-700">{{r.email}}</a>
+              <span *ngIf="!r.email">—</span>
             </td>
-            <td class="p-3">{{r.nom_commune || '—'}}</td>
+            <td class="p-3">
+              <a *ngIf="r.site" [href]="r.site" target="_blank" class="underline text-blue-700">{{r.site}}</a>
+              <span *ngIf="!r.site">—</span>
+            </td>
+            <td class="p-3">{{r.region || '—'}}</td>
           </tr>
           <tr *ngIf="!rows.length && !loading">
-            <td colspan="5" class="p-6 text-center text-slate-500">Aucun résultat.</td>
+            <td colspan="6" class="p-6 text-center text-slate-500">Aucun résultat.</td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <div class="mt-4">
+    <div class="mt-4 text-center">
       <button (click)="onMore()" [disabled]="loading || rows.length >= total"
               class="rounded-xl px-4 py-2 bg-slate-700 text-white">
         {{ rows.length >= total ? 'Fin des résultats' : (loading ? 'Chargement…' : 'Voir plus') }}

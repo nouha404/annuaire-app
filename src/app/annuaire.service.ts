@@ -1,249 +1,57 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
-import { environment } from '../environments/environment';
 
 export type Row = {
   nom: string;
   adresse?: string;
   telephone?: string;
-  site_web?: string;
-  nom_commune?: string;
+  email?: string;
+  site?: string;
+  region?: string;
+  latitude?: string;
+  longitude?: string;
   url?: string;
 };
 
-type V21Response = {
-  total_count: number;
-  results: any[];
-};
+export type ScrapeResp = { count: number; rows: Row[]; duration?: string };
 
 @Injectable({ providedIn: 'root' })
 export class AnnuaireService {
-  private base = environment.API_BASE;   // "https://api-lannuaire.service-public.fr"
-  private dataset = environment.DATASET; // "api-lannuaire-administration"
-
   constructor(private http: HttpClient) {}
 
-  /** Recherche v2.1 avec q, limit (<=100), offset */
-  // src/app/annuaire.service.ts
-async search(what: string, where?: string, limit = 100, offset = 0) {
-  const base = this.base;
-  const ds = this.dataset;
-  const urlV21 = `${base}/api/explore/v2.1/catalog/datasets/${ds}/records`;
-  const w = (where ?? '').trim();
-  const esc = (s: string) => s.replace(/'/g, "''").toLowerCase();
-
-  // --- si on veut coller au site : on restreint aux fiches Gendarmerie
-  //     + on exige que "nom" contienne peloton
-  const whereParts: string[] = [];
-  if (what) whereParts.push(`lower(nom) like '%${esc(what)}%'`);
-  // ne garder que les fiches gendarmerie
-  whereParts.push(`url_service_public like '%/gendarmerie/%'`);
-
-  if (w) {
-    if (/^\d{5}$/.test(w)) {
-      // code postal
-      whereParts.push(`adresse like '%"code_postal": "${w}"%'`);
-    } else {
-      // ville / texte
-      const sw = esc(w);
-      whereParts.push(`(lower(adresse) like '%${sw}%' OR lower(nom) like '%${sw}%')`);
-    }
+  async search(what: string, where = '', maxPages = 5): Promise<ScrapeResp> {
+    const p = new HttpParams()
+      .set('what', what)
+      .set('where', where)
+      .set('maxPages', String(maxPages));
+    
+    return await firstValueFrom(
+      this.http.get<ScrapeResp>('/api/scrape', { params: p })
+    );
   }
 
-  const params = new HttpParams()
-    .set('limit', String(Math.min(Math.max(limit, 1), 100)))
-    .set('offset', String(Math.max(offset, 0)))
-    .set('where', whereParts.join(' AND '))
-    .set('order_by', 'nom ASC');
-
-  const r: any = await firstValueFrom(this.http.get(urlV21, { params }));
-  const results = (r?.results ?? []).map((it: any) => this.mapRecordV21(it));
-  return { total_count: r?.total_count ?? results.length, results };
-}
-
-
-
-  /** CSV généré par l’API v2.1 (respecte limit<=100, utilise offset si tu veux paginer côté client) */
-  async downloadCsv(what: string, where?: string, limit = 100, offset = 0) {
-    const q = this.qExpr(what, where);
-    const params = new HttpParams()
-      .set('limit', String(Math.min(Math.max(limit, 1), 100)))
-      .set('offset', String(Math.max(offset, 0)))
-      .set('q', q)
+  async downloadCsv(what: string, where = '', maxPages = 5): Promise<Blob> {
+    const p = new HttpParams()
+      .set('what', what)
+      .set('where', where)
+      .set('maxPages', String(maxPages))
       .set('format', 'csv');
-
-    const url = `${this.base}/api/explore/v2.1/catalog/datasets/${this.dataset}/records`;
-    return firstValueFrom(this.http.get(url, { params, responseType: 'blob' }));
+    
+    return await firstValueFrom(
+      this.http.get('/api/scrape', { params: p, responseType: 'blob' })
+    );
   }
 
-  /** XLSX côté front (ESM friendly) */
-  async makeXlsxBlob(rows: Row[]) {
-    const XLSX = (await import('xlsx')).default;
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Annuaire');
-    const ab = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
-    return new Blob([ab], {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    });
+  async downloadXlsx(what: string, where = '', maxPages = 5): Promise<Blob> {
+    const p = new HttpParams()
+      .set('what', what)
+      .set('where', where)
+      .set('maxPages', String(maxPages))
+      .set('format', 'xlsx');
+    
+    return await firstValueFrom(
+      this.http.get('/api/scrape', { params: p, responseType: 'blob' })
+    );
   }
-
-  // -------- helpers --------
-
-  private qExpr(what: string, where?: string) {
-    const parts = [what?.trim(), where?.trim()].filter(Boolean);
-    return parts.join(' ');
-  }
-
-  /** v2.1 item -> Row (parse les champs JSON stringifiés) */
-  private mapRecordV21(item: any): Row {
-    const obj = item ?? {};
-
-    const nom: string = this.pick(obj, ['nom', 'intitule', 'libelle', 'label', 'name']) ?? '—';
-    const url =
-      this.pick(obj, ['url_service_public', 'url', 'permalink', 'lien_detail']) ?? undefined;
-
-    // adresse: souvent string JSON d’un tableau d’objets
-    const adresseRaw = this.pick(obj, ['adresse', 'adresse_postale', 'adresses']);
-    const adresse = this.formatAdresse(adresseRaw);
-
-    // telephone: souvent string JSON d’un tableau [{ valeur: "..." }]
-    const telRaw = this.pick(obj, ['telephone', 'tel', 'phone', 'numero_telephone']);
-    const telephone = this.formatTelephone(telRaw);
-
-    // site_internet: string JSON d’un tableau [{ valeur: "..." }]
-    const siteRaw = this.pick(obj, ['site_internet', 'site', 'site_web', 'web', 'url_site']);
-    const site_web = this.firstUrl(siteRaw);
-
-    // commune (si présent dans le 1er bloc adresse)
-    const nom_commune = this.extractCommune(adresseRaw);
-
-    return { nom, adresse, telephone, site_web, nom_commune, url };
-  }
-
-  private pick(o: any, keys: string[]) {
-    for (const k of keys) {
-      if (o?.[k] != null && o?.[k] !== '') return o[k];
-      // tolérance : clefs proches (minuscules/underscores)
-      const found = Object.keys(o ?? {}).find(
-        (kk) => kk.toLowerCase().includes(k.toLowerCase())
-      );
-      if (found && o[found] != null && o[found] !== '') return o[found];
-    }
-    return undefined;
-  }
-
-  private maybeParseJSON(value: any) {
-    if (typeof value !== 'string') return value;
-    const s = value.trim();
-    if (!(s.startsWith('[') || s.startsWith('{'))) return value;
-    try {
-      return JSON.parse(s);
-    } catch {
-      return value;
-    }
-  }
-
-  private formatAdresse(raw: any) {
-    const v = this.maybeParseJSON(raw);
-    if (Array.isArray(v) && v.length) {
-      // on prend la première adresse "type_adresse" si possible
-      const a = v.find((x) => x.type_adresse?.toLowerCase().includes('adresse')) ?? v[0];
-      const parts = [
-        a?.numero_voie,
-        a?.complement1,
-        a?.complement2,
-        a?.service_distribution,
-        a?.nom_commune,
-        a?.code_postal
-      ]
-        .filter(Boolean)
-        .join(', ');
-      return parts || undefined;
-    }
-    if (typeof v === 'object' && v) {
-      const parts = [
-        v?.numero_voie,
-        v?.complement1,
-        v?.complement2,
-        v?.service_distribution,
-        v?.nom_commune,
-        v?.code_postal
-      ]
-        .filter(Boolean)
-        .join(', ');
-      return parts || undefined;
-    }
-    // fallback: rendre tel quel
-    return typeof raw === 'string' ? raw : undefined;
-  }
-
-  private formatTelephone(raw: any) {
-    const v = this.maybeParseJSON(raw);
-    if (Array.isArray(v) && v.length) {
-      // retourne la première valeur non vide
-      const val = v.map((x) => x?.valeur).find((s) => !!s);
-      return val || undefined;
-    }
-    if (typeof v === 'string' && v) return v;
-    return undefined;
-  }
-
-  private firstUrl(raw: any) {
-    const v = this.maybeParseJSON(raw);
-    if (Array.isArray(v) && v.length) {
-      const val = v.map((x) => x?.valeur).find((s) => !!s);
-      return val || undefined;
-    }
-    if (typeof v === 'string' && /^https?:\/\//i.test(v)) return v;
-    return undefined;
-  }
-
-  private extractCommune(raw: any) {
-    const v = this.maybeParseJSON(raw);
-    if (Array.isArray(v) && v.length) {
-      const a = v[0];
-      return a?.nom_commune || undefined;
-    }
-    if (typeof v === 'object' && v) {
-      return v?.nom_commune || undefined;
-    }
-    return undefined;
-  }
-
-  /** CSV "propre" à partir des rows normalisées (séparateur ; pour Excel FR) */
-makeCsvBlob(rows: Row[], separator: string = ';') {
-  const headers = ['nom','adresse','telephone','site_web','nom_commune','url'];
-
-  const esc = (v: any) => {
-    const s = (v ?? '').toString().replace(/\r?\n+/g, ' ').trim();
-    // on entoure toujours de guillemets et on double les guillemets internes
-    return `"${s.replace(/"/g, '""')}"`;
-  };
-
-  const lines = [
-    headers.join(separator),
-    ...rows.map(r => headers.map(h => esc((r as any)[h])).join(separator))
-  ];
-
-  return new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
 }
-
-async searchAll(what: string, where?: string, pageSize = 100, maxPages = 50) {
-  let offset = 0;
-  let total = 0;
-  const all: Row[] = [];
-  for (let i = 0; i < maxPages; i++) {
-    const { total_count, results } = await this.search(what, where, pageSize, offset);
-    if (i === 0) total = total_count ?? results.length;
-    all.push(...results);
-    offset += pageSize;
-    if (all.length >= total || results.length === 0) break;
-  }
-  return { total_count: total, results: all };
-}
-
-
-}
-

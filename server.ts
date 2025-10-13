@@ -1,56 +1,100 @@
-import { APP_BASE_HREF } from '@angular/common';
-import { CommonEngine } from '@angular/ssr';
-import express from 'express';
-import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
-import AppServerModule from './src/main.server';
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+import path from 'path';
+import * as XLSX from 'xlsx';
+import { scrape, ScraperRow } from './api/scraper';
 
-// The Express app is exported so that it can be used by serverless Functions.
-export function app(): express.Express {
-  const server = express();
-  const serverDistFolder = dirname(fileURLToPath(import.meta.url));
-  const browserDistFolder = resolve(serverDistFolder, '../browser');
-  const indexHtml = join(serverDistFolder, 'index.server.html');
+const app = express();
 
-  const commonEngine = new CommonEngine();
+app.use(cors());
+app.use(express.json());
 
-  server.set('view engine', 'html');
-  server.set('views', browserDistFolder);
+const distFolder = path.join(process.cwd(), 'dist/annuaire-app/browser');
+app.use(express.static(distFolder));
 
-  // Example Express Rest API endpoints
-  // server.get('/api/**', (req, res) => { });
-  // Serve static files from /browser
-  server.get('*.*', express.static(browserDistFolder, {
-    maxAge: '1y'
-  }));
-
-  // All regular routes use the Angular engine
-  server.get('*', (req, res, next) => {
-    const { protocol, originalUrl, baseUrl, headers } = req;
-
-    commonEngine
-      .render({
-        bootstrap: AppServerModule,
-        documentFilePath: indexHtml,
-        url: `${protocol}://${headers.host}${originalUrl}`,
-        publicPath: browserDistFolder,
-        providers: [{ provide: APP_BASE_HREF, useValue: baseUrl }],
-      })
-      .then((html) => res.send(html))
-      .catch((err) => next(err));
-  });
-
-  return server;
+function toCsv(rows: ScraperRow[]): string {
+  const cols = ['nom', 'adresse', 'telephone', 'email', 'site', 'region', 'latitude', 'longitude', 'url'];
+  const esc = (s: any) => 
+    `"${String(s ?? '').replace(/"/g, '""').replace(/\r?\n/g, ' ').trim()}"`;
+  
+  const head = cols.join(',');
+  const body = rows.map(r => cols.map(c => esc((r as any)[c])).join(',')).join('\n');
+  
+  return `${head}\n${body}`;
 }
 
-function run(): void {
-  const port = process.env['PORT'] || 4000;
+app.get('/api/scrape', async (req: Request, res: Response) => {
+  const what = String(req.query['what'] || '').trim();
+  const where = String(req.query['where'] || '').trim();
+  const format = String(req.query['format'] || 'json').toLowerCase();
+  const maxPages = Math.max(1, Math.min(10, Number(req.query['maxPages']) || 5));
 
-  // Start up the Node server
-  const server = app();
-  server.listen(port, () => {
-    console.log(`Node Express server listening on http://localhost:${port}`);
-  });
-}
+  console.log('\n🎯 Nouvelle requête:');
+  console.log(`   what: "${what}"`);
+  console.log(`   where: "${where}"`);
+  console.log(`   format: ${format}`);
+  console.log(`   maxPages: ${maxPages}`);
 
-run();
+  if (!what) {
+    return res.status(400).json({ error: 'Paramètre "what" requis' });
+  }
+
+  try {
+    const startTime = Date.now();
+    const rows = await scrape(what, where, maxPages);
+    const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+    console.log(`⏱️  Terminé en ${duration}s`);
+    console.log(`📊 ${rows.length} résultats`);
+
+    if (format === 'csv') {
+      const csv = toCsv(rows);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="annuaire_${what.replace(/\s+/g, '_')}.csv"`
+      );
+      return res.send('\ufeff' + csv);
+    }
+
+    if (format === 'xlsx') {
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Annuaire');
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="annuaire_${what.replace(/\s+/g, '_')}.xlsx"`
+      );
+      return res.send(buf);
+    }
+
+    res.json({ count: rows.length, rows, duration: `${duration}s` });
+
+  } catch (err: any) {
+    console.error('❌ Erreur scraping:', err);
+    res.status(500).json({ 
+      error: err.message || 'Erreur serveur',
+      details: err.stack
+    });
+  }
+});
+
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(distFolder, 'index.html'));
+});
+
+const port = Number(process.env['PORT'] || 3000);
+app.listen(port, () => {
+  console.log('\n╔════════════════════════════════════════╗');
+  console.log('║  🚀 SERVEUR SCRAPER SERVICE-PUBLIC    ║');
+  console.log('╚════════════════════════════════════════╝');
+  console.log(`\n✅ Serveur sur http://localhost:${port}`);
+  console.log(`📍 Route API: GET /api/scrape`);
+  console.log(`💡 CTRL+C pour arrêter\n`);
+});
