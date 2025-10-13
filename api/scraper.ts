@@ -31,8 +31,16 @@ async function createDriver(): Promise<WebDriver> {
     '--disable-dev-shm-usage',
     '--disable-gpu',
     '--window-size=1920,1080',
+    '--disable-setuid-sandbox',
+    '--disable-software-rasterizer',
     '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
   );
+
+  // Correction TypeScript pour CHROME_BIN
+  const chromeBin = process.env['CHROME_BIN'];
+  if (chromeBin) {
+    options.setChromeBinaryPath(chromeBin);
+  }
 
   return await new Builder()
     .forBrowser(Browser.CHROME)

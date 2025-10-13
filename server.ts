@@ -14,12 +14,10 @@ app.use(express.static(distFolder));
 
 function toCsv(rows: ScraperRow[]): string {
   const cols = ['nom', 'adresse', 'telephone', 'email', 'site', 'region', 'latitude', 'longitude', 'url'];
-  const esc = (s: any) => 
+  const esc = (s: any) =>
     `"${String(s ?? '').replace(/"/g, '""').replace(/\r?\n/g, ' ').trim()}"`;
-  
   const head = cols.join(',');
   const body = rows.map(r => cols.map(c => esc((r as any)[c])).join(',')).join('\n');
-  
   return `${head}\n${body}`;
 }
 
@@ -30,10 +28,10 @@ app.get('/api/scrape', async (req: Request, res: Response) => {
   const maxPages = Math.max(1, Math.min(10, Number(req.query['maxPages']) || 5));
 
   console.log('\n🎯 Nouvelle requête:');
-  console.log(`   what: "${what}"`);
-  console.log(`   where: "${where}"`);
-  console.log(`   format: ${format}`);
-  console.log(`   maxPages: ${maxPages}`);
+  console.log(`  what: "${what}"`);
+  console.log(`  where: "${where}"`);
+  console.log(`  format: ${format}`);
+  console.log(`  maxPages: ${maxPages}`);
 
   if (!what) {
     return res.status(400).json({ error: 'Paramètre "what" requis' });
@@ -62,7 +60,6 @@ app.get('/api/scrape', async (req: Request, res: Response) => {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Annuaire');
       const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-      
       res.setHeader(
         'Content-Type',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -75,10 +72,9 @@ app.get('/api/scrape', async (req: Request, res: Response) => {
     }
 
     res.json({ count: rows.length, rows, duration: `${duration}s` });
-
   } catch (err: any) {
     console.error('❌ Erreur scraping:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       error: err.message || 'Erreur serveur',
       details: err.stack
     });
@@ -89,12 +85,14 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(distFolder, 'index.html'));
 });
 
-const port = Number(process.env['PORT'] || 3000);
-app.listen(port, () => {
+// Correction pour Railway
+const port = Number(process.env['PORT']) || 3000;
+
+app.listen(port, '0.0.0.0', () => {
   console.log('\n╔════════════════════════════════════════╗');
   console.log('║  🚀 SERVEUR SCRAPER SERVICE-PUBLIC    ║');
   console.log('╚════════════════════════════════════════╝');
-  console.log(`\n✅ Serveur sur http://localhost:${port}`);
+  console.log(`\n✅ Serveur sur http://0.0.0.0:${port}`);
   console.log(`📍 Route API: GET /api/scrape`);
   console.log(`💡 CTRL+C pour arrêter\n`);
 });
