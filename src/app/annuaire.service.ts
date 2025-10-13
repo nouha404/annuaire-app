@@ -25,18 +25,44 @@ export class AnnuaireService {
   constructor(private http: HttpClient) {}
 
   /** Recherche v2.1 avec q, limit (<=100), offset */
-  async search(what: string, where?: string, limit = 100, offset = 0) {
-    const q = this.qExpr(what, where);
-    const params = new HttpParams()
-      .set('limit', String(Math.min(Math.max(limit, 1), 100)))
-      .set('offset', String(Math.max(offset, 0)))
-      .set('q', q);
+  // src/app/annuaire.service.ts
+async search(what: string, where?: string, limit = 100, offset = 0) {
+  const base = this.base;
+  const ds = this.dataset;
+  const urlV21 = `${base}/api/explore/v2.1/catalog/datasets/${ds}/records`;
+  const w = (where ?? '').trim();
+  const esc = (s: string) => s.replace(/'/g, "''").toLowerCase();
 
-    const url = `${this.base}/api/explore/v2.1/catalog/datasets/${this.dataset}/records`;
-    const r = await firstValueFrom(this.http.get<V21Response>(url, { params }));
-    const results = (r.results ?? []).map((it) => this.mapRecordV21(it));
-    return { total_count: r.total_count ?? results.length, results };
+  // --- si on veut coller au site : on restreint aux fiches Gendarmerie
+  //     + on exige que "nom" contienne peloton
+  const whereParts: string[] = [];
+  if (what) whereParts.push(`lower(nom) like '%${esc(what)}%'`);
+  // ne garder que les fiches gendarmerie
+  whereParts.push(`url_service_public like '%/gendarmerie/%'`);
+
+  if (w) {
+    if (/^\d{5}$/.test(w)) {
+      // code postal
+      whereParts.push(`adresse like '%"code_postal": "${w}"%'`);
+    } else {
+      // ville / texte
+      const sw = esc(w);
+      whereParts.push(`(lower(adresse) like '%${sw}%' OR lower(nom) like '%${sw}%')`);
+    }
   }
+
+  const params = new HttpParams()
+    .set('limit', String(Math.min(Math.max(limit, 1), 100)))
+    .set('offset', String(Math.max(offset, 0)))
+    .set('where', whereParts.join(' AND '))
+    .set('order_by', 'nom ASC');
+
+  const r: any = await firstValueFrom(this.http.get(urlV21, { params }));
+  const results = (r?.results ?? []).map((it: any) => this.mapRecordV21(it));
+  return { total_count: r?.total_count ?? results.length, results };
+}
+
+
 
   /** CSV généré par l’API v2.1 (respecte limit<=100, utilise offset si tu veux paginer côté client) */
   async downloadCsv(what: string, where?: string, limit = 100, offset = 0) {
@@ -185,4 +211,39 @@ export class AnnuaireService {
     }
     return undefined;
   }
+
+  /** CSV "propre" à partir des rows normalisées (séparateur ; pour Excel FR) */
+makeCsvBlob(rows: Row[], separator: string = ';') {
+  const headers = ['nom','adresse','telephone','site_web','nom_commune','url'];
+
+  const esc = (v: any) => {
+    const s = (v ?? '').toString().replace(/\r?\n+/g, ' ').trim();
+    // on entoure toujours de guillemets et on double les guillemets internes
+    return `"${s.replace(/"/g, '""')}"`;
+  };
+
+  const lines = [
+    headers.join(separator),
+    ...rows.map(r => headers.map(h => esc((r as any)[h])).join(separator))
+  ];
+
+  return new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
 }
+
+async searchAll(what: string, where?: string, pageSize = 100, maxPages = 50) {
+  let offset = 0;
+  let total = 0;
+  const all: Row[] = [];
+  for (let i = 0; i < maxPages; i++) {
+    const { total_count, results } = await this.search(what, where, pageSize, offset);
+    if (i === 0) total = total_count ?? results.length;
+    all.push(...results);
+    offset += pageSize;
+    if (all.length >= total || results.length === 0) break;
+  }
+  return { total_count: total, results: all };
+}
+
+
+}
+

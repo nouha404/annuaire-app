@@ -52,30 +52,47 @@ export class AppComponent {
   }
 
   async onExportCsv() {
-    try {
-      const blob = await this.api.downloadCsv(this.what.trim(), this.where.trim(), this.pageSize, 0);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `annuaire_${this.what.replace(/\s+/g,'_')}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      alert('Export CSV échoué.');
-    }
+  try {
+    const blob = this.api.makeCsvBlob(this.rows); // ← CSV clean côté front
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `annuaire_${this.what.replace(/\s+/g,'_')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    alert('Export CSV échoué.');
   }
+}
 
-  async onExportXlsx() {
-    try {
-      const blob = await this.api.makeXlsxBlob(this.rows);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `annuaire_${this.what.replace(/\s+/g,'_')}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      alert('Export XLSX échoué.');
-    }
+async onExportXlsx() {
+  try {
+    const blob = await this.api.makeXlsxBlob(this.rows); // ← déjà async
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `annuaire_${this.what.replace(/\s+/g,'_')}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    alert('Export XLSX échoué.');
   }
+}
+
+async onExportCsvAll() {
+  try {
+    const { results } = await this.api.searchAll(this.what.trim(), this.where.trim());
+    const blob = this.api.makeCsvBlob(results);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `annuaire_${this.what.replace(/\s+/g,'_')}_all.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    alert('Export CSV (tout) échoué.');
+  }
+}
+
+
 }
