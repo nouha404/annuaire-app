@@ -10,8 +10,7 @@ export class AppComponent {
   title = 'annuaire-app';
   what = '';
   where = '';
-  maxPages = 3;
-  
+  maxPages = 3; // Valeur par défaut
   rows: Row[] = [];
   total = 0;
   loading = false;
@@ -32,9 +31,9 @@ export class AppComponent {
 
     try {
       const resp = await this.api.search(
-        this.what.trim(), 
-        this.where.trim(), 
-        this.maxPages
+        this.what.trim(),
+        this.where.trim(),
+        Number(this.maxPages) // Conversion en nombre
       );
       
       this.rows = resp.rows ?? [];
@@ -58,9 +57,9 @@ export class AppComponent {
     try {
       this.loading = true;
       const blob = await this.api.downloadCsv(
-        this.what.trim(), 
-        this.where.trim(), 
-        this.maxPages
+        this.what.trim(),
+        this.where.trim(),
+        Number(this.maxPages)
       );
       
       const url = URL.createObjectURL(blob);
@@ -83,9 +82,9 @@ export class AppComponent {
     try {
       this.loading = true;
       const blob = await this.api.downloadXlsx(
-        this.what.trim(), 
-        this.where.trim(), 
-        this.maxPages
+        this.what.trim(),
+        this.where.trim(),
+        Number(this.maxPages)
       );
       
       const url = URL.createObjectURL(blob);
@@ -100,9 +99,5 @@ export class AppComponent {
     } finally {
       this.loading = false;
     }
-  }
-
-  onMore() {
-    // Pas de pagination côté client
   }
 }
