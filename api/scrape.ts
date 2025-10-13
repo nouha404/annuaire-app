@@ -1,3 +1,4 @@
+const isVercel = !!process.env['VERCEL']; 
 // api/scrape.ts
 type VercelRequest = import('http').IncomingMessage & { query: Record<string, any> };
 type VercelResponse = import('http').ServerResponse & {
@@ -143,7 +144,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch {
       /* ignore */
     }
-    if (!links.length) links = await crawlWithPuppeteer(what, where);
+      if (!links.length && isVercel) {
+      links = await crawlWithPuppeteer(what, where);
+    }
 
     const rows: any[] = [];
     for (const u of links) {
