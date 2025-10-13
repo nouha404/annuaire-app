@@ -1,0 +1,43 @@
+<div class="min-h-screen bg-slate-50">
+  <header class="px-6 py-4 bg-white shadow sticky top-0">
+    <h1 class="text-2xl font-semibold">🕵️ get-infos</h1>
+    <p class="text-sm text-slate-500">Scraper Service-Public et exporter en Excel</p>
+  </header>
+  <main class="px-6 py-6 max-w-6xl mx-auto">
+    <form (ngSubmit)="onSearch()" class="grid md:grid-cols-12 gap-3 items-end">
+      <div class="md:col-span-5">
+        <label class="block text-sm mb-1">Qui / Quoi *</label>
+        <input [(ngModel)]="what" name="what" required class="w-full border rounded-xl px-4 py-2 bg-white" placeholder="Ex: Peloton motorisé">
+      </div>
+      <div class="md:col-span-4">
+        <label class="block text-sm mb-1">Où</label>
+        <input [(ngModel)]="where" name="where" class="w-full border rounded-xl px-4 py-2 bg-white" placeholder="Ex: Paris, 75000">
+      </div>
+      <div class="md:col-span-3 flex gap-2">
+        <button [disabled]="loading" class="flex-1 rounded-xl px-4 py-2 bg-blue-600 text-white">
+          {{ loading ? 'Recherche…' : 'Rechercher' }}
+        </button>
+        <button type="button" (click)="onExport()" [disabled]="!rows.length||loading" class="rounded-xl px-4 py-2 bg-emerald-600 text-white">Exporter</button>
+      </div>
+    </form>
+    <div *ngIf="error" class="mt-4 text-red-600">{{error}}</div>
+    <div class="mt-6 bg-white rounded-2xl shadow overflow-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-100">
+          <tr>
+            <th class="text-left p-3">Nom</th><th class="text-left p-3">Adresse</th><th class="text-left p-3">Téléphone</th><th class="text-left p-3">Site</th><th class="text-left p-3">Région</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let r of rows" class="border-t">
+            <td class="p-3"><a [href]="r.url" target="_blank" class="text-blue-700 underline">{{r.nom}}</a></td>
+            <td class="p-3 whitespace-pre-line">{{r.adresse||'—'}}</td>
+            <td class="p-3"><a *ngIf="r.telephone" [href]="'tel:'+r.telephone" class="underline">{{r.telephone}}</a><span *ngIf="!r.telephone">—</span></td>
+            <td class="p-3"><a *ngIf="r.site" [href]="r.site" target="_blank" class="underline">{{r.site}}</a><span *ngIf="!r.site">—</span></td>
+            <td class="p-3">{{r.region||'—'}}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
