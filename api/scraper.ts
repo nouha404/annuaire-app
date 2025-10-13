@@ -126,7 +126,12 @@ async function scrapeDetailPage(driver: WebDriver, url: string): Promise<Scraper
       By.css('a.send-mail, a[href^="mailto:"]')
     );
     const href = await emailLink.getAttribute('href');
-    data.email = href.replace('mailto:', '').trim();
+    
+    // Extraire uniquement l'email (avant le ?)
+    const emailMatch = href.match(/mailto:([^?]+)/);
+    if (emailMatch && emailMatch[1]) {
+      data.email = emailMatch[1].trim();
+    }
   } catch (e) {
     // Pas d'email
   }
