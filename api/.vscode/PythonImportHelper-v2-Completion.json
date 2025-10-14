@@ -1,0 +1,37 @@
+[
+    {
+        "label": "BeautifulSoup",
+        "importPath": "bs4",
+        "description": "bs4",
+        "isExtraImport": true,
+        "detail": "bs4",
+        "documentation": {}
+    },
+    {
+        "label": "requests",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "requests",
+        "description": "requests",
+        "detail": "requests",
+        "documentation": {}
+    },
+    {
+        "label": "getInfosSiteOn",
+        "kind": 2,
+        "importPath": "py.scrapper",
+        "description": "py.scrapper",
+        "peekOfCode": "def getInfosSiteOn(url : str):\n    response = requests.get(url, headers=headers)\n    soup = BeautifulSoup(response.content, 'html.parser')",
+        "detail": "py.scrapper",
+        "documentation": {}
+    },
+    {
+        "label": "headers",
+        "kind": 5,
+        "importPath": "py.scrapper",
+        "description": "py.scrapper",
+        "peekOfCode": "headers = {\n    'user-agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Mobile Safari/537.36 Edg/105.0.1343.33'\n}\ndef getInfosSiteOn(url : str):\n    response = requests.get(url, headers=headers)\n    soup = BeautifulSoup(response.content, 'html.parser')",
+        "detail": "py.scrapper",
+        "documentation": {}
+    }
+]

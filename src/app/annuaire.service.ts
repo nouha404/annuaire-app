@@ -3,14 +3,16 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
 export type Row = {
+  source: string;
   nom: string;
-  adresse?: string;
-  telephone?: string;
+  adresse: string;
+  telephone: string;
+  ville: string;
+  type: string;
+  region?: string;
+  statut?: string;
   email?: string;
   site?: string;
-  region?: string;
-  latitude?: string;
-  longitude?: string;
   url?: string;
 };
 
@@ -25,7 +27,6 @@ export class AnnuaireService {
       .set('what', what)
       .set('where', where)
       .set('maxPages', String(maxPages));
-    
     return await firstValueFrom(
       this.http.get<ScrapeResp>('/api/scrape', { params: p })
     );
@@ -37,7 +38,6 @@ export class AnnuaireService {
       .set('where', where)
       .set('maxPages', String(maxPages))
       .set('format', 'csv');
-    
     return await firstValueFrom(
       this.http.get('/api/scrape', { params: p, responseType: 'blob' })
     );
@@ -49,7 +49,6 @@ export class AnnuaireService {
       .set('where', where)
       .set('maxPages', String(maxPages))
       .set('format', 'xlsx');
-    
     return await firstValueFrom(
       this.http.get('/api/scrape', { params: p, responseType: 'blob' })
     );

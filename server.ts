@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import path from 'path';
 import * as XLSX from 'xlsx';
-import { scrape, ScraperRow } from './api/scraper';
+import { scrapeUnified, UnifiedRow } from './api/scraper-unified';
 
 const app = express();
 
@@ -12,8 +12,8 @@ app.use(express.json());
 const distFolder = path.join(process.cwd(), 'dist/annuaire-app/browser');
 app.use(express.static(distFolder));
 
-function toCsv(rows: ScraperRow[]): string {
-  const cols = ['nom', 'adresse', 'telephone', 'email', 'site', 'region', 'latitude', 'longitude', 'url'];
+function toCsvUnified(rows: UnifiedRow[]): string {
+  const cols = ['source', 'nom', 'adresse', 'telephone', 'ville', 'type', 'region', 'statut'];
   const esc = (s: any) =>
     `"${String(s ?? '').replace(/"/g, '""').replace(/\r?\n/g, ' ').trim()}"`;
   const head = cols.join(',');
@@ -27,7 +27,7 @@ app.get('/api/scrape', async (req: Request, res: Response) => {
   const format = String(req.query['format'] || 'json').toLowerCase();
   const maxPages = Math.max(1, Math.min(10, Number(req.query['maxPages']) || 5));
 
-  console.log('\n🎯 Nouvelle requête:');
+  console.log('\n🎯 Nouvelle requête UNIFIÉE:');
   console.log(`  what: "${what}"`);
   console.log(`  where: "${where}"`);
   console.log(`  format: ${format}`);
@@ -39,14 +39,15 @@ app.get('/api/scrape', async (req: Request, res: Response) => {
 
   try {
     const startTime = Date.now();
-    const rows = await scrape(what, where, maxPages);
+    
+    const rows = await scrapeUnified(what, where, maxPages);
+    
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-
     console.log(`⏱️  Terminé en ${duration}s`);
-    console.log(`📊 ${rows.length} résultats`);
+    console.log(`📊 ${rows.length} résultats uniques`);
 
     if (format === 'csv') {
-      const csv = toCsv(rows);
+      const csv = toCsvUnified(rows);
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader(
         'Content-Disposition',
@@ -85,12 +86,11 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(distFolder, 'index.html'));
 });
 
-// Correction pour Railway
 const port = Number(process.env['PORT']) || 3000;
 
 app.listen(port, '0.0.0.0', () => {
   console.log('\n╔════════════════════════════════════════╗');
-  console.log('║  🚀 SERVEUR SCRAPER SERVICE-PUBLIC    ║');
+  console.log('║  🚀 SERVEUR SCRAPER UNIFIÉ            ║');
   console.log('╚════════════════════════════════════════╝');
   console.log(`\n✅ Serveur sur http://0.0.0.0:${port}`);
   console.log(`📍 Route API: GET /api/scrape`);
