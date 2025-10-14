@@ -1,6 +1,8 @@
 import { Component } from '@angular/core';
 import { AnnuaireService, Row } from './annuaire.service';
 
+type TabId = 'service-public' | 'masecurite';
+
 @Component({
   selector: 'app-root',
   templateUrl: './app.component.html',
@@ -11,93 +13,118 @@ export class AppComponent {
   what = '';
   where = '';
   maxPages = 3;
-  rows: Row[] = [];
-  total = 0;
-  loading = false;
-  error = '';
   
-  // États de progression
+  // Système d'onglets
+  activeTab: TabId = 'service-public';
+  
+  // Résultats par source
+  rowsServicePublic: Row[] = [];
+  rowsMaSecurite: Row[] = [];
+  
+  // États de chargement par source
+  loadingServicePublic = false;
+  loadingMaSecurite = false;
+  
+  // Erreurs par source
+  errorServicePublic = '';
+  errorMaSecurite = '';
+  
+  // Progression
   loadingStep = '';
   progress = 0;
 
   constructor(private api: AnnuaireService) {}
 
+  // Getter pour les résultats de l'onglet actif
+  get currentRows(): Row[] {
+    return this.activeTab === 'service-public' 
+      ? this.rowsServicePublic 
+      : this.rowsMaSecurite;
+  }
+
+  get isLoading(): boolean {
+    return this.loadingServicePublic || this.loadingMaSecurite;
+  }
+
+  get currentError(): string {
+    return this.activeTab === 'service-public' 
+      ? this.errorServicePublic 
+      : this.errorMaSecurite;
+  }
+
+  // Changer d'onglet
+  switchTab(tab: TabId) {
+    this.activeTab = tab;
+  }
+
   async onSearch() {
     if (!this.what.trim()) {
-      this.error = 'Veuillez entrer un terme de recherche';
+      this.errorServicePublic = 'Veuillez entrer un terme de recherche';
       return;
     }
 
-    this.error = '';
-    this.loading = true;
-    this.rows = [];
-    this.total = 0;
+    // Reset
+    this.errorServicePublic = '';
+    this.errorMaSecurite = '';
+    this.rowsServicePublic = [];
+    this.rowsMaSecurite = [];
+    this.loadingServicePublic = true;
     this.progress = 0;
-    this.loadingStep = 'Initialisation...';
 
     try {
-      // Simuler les étapes (en temps réel côté backend)
-      const startTime = Date.now();
-      
-      // Étape 1
       this.loadingStep = '📡 Connexion à Service-Public.fr...';
       this.progress = 10;
       await this.wait(500);
 
-      // Étape 2
       this.loadingStep = '🔍 Recherche des résultats...';
       this.progress = 20;
       await this.wait(500);
 
-      // Étape 3
-      this.loadingStep = '🔗 Collecte des liens des organismes...';
+      this.loadingStep = '🔗 Collecte des liens...';
       this.progress = 40;
 
-      // Lancer la vraie requête
       const resp = await this.api.search(
         this.what.trim(),
         this.where.trim(),
         Number(this.maxPages)
       );
 
-      // Étape 4
       this.loadingStep = '📥 Extraction des données...';
       this.progress = 70;
       await this.wait(300);
 
-      // Étape 5
       this.loadingStep = '✨ Finalisation...';
       this.progress = 90;
 
-      this.rows = resp.rows ?? [];
-      this.total = resp.count ?? this.rows.length;
+      // Séparer les résultats par source
+      this.rowsServicePublic = resp.rows.filter(r => r.source === 'Service-Public');
+      this.rowsMaSecurite = resp.rows.filter(r => r.source !== 'Service-Public');
 
-      // Étape finale
       this.progress = 100;
-      this.loadingStep = `✅ ${this.rows.length} résultats trouvés !`;
-      
-      console.log(`✅ ${this.rows.length} résultats reçus`);
-      if (resp.duration) {
-        console.log(`⏱️ Durée: ${resp.duration}`);
-      }
+      this.loadingStep = `✅ ${resp.rows.length} résultats trouvés !`;
+
+      console.log(`✅ Service-Public: ${this.rowsServicePublic.length}`);
+      console.log(`✅ MaSécurité: ${this.rowsMaSecurite.length}`);
 
       await this.wait(500);
 
     } catch (e: any) {
-      this.error = e?.error?.error || e?.message || 'Erreur de recherche';
+      this.errorServicePublic = e?.error?.error || e?.message || 'Erreur de recherche';
       console.error('❌ Erreur:', e);
-      this.loadingStep = '';
-      this.progress = 0;
     } finally {
-      this.loading = false;
+      this.loadingServicePublic = false;
       this.loadingStep = '';
     }
   }
 
   async onExportCsv() {
     if (!this.what.trim()) return;
+    
+    const rows = this.currentRows;
+    if (rows.length === 0) return;
+
     try {
-      this.loading = true;
+      this.loadingServicePublic = true;
       this.loadingStep = '📄 Génération du fichier CSV...';
       
       const blob = await this.api.downloadCsv(
@@ -109,22 +136,29 @@ export class AppComponent {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `annuaire_${this.what.replace(/\s+/g, '_')}.csv`;
+      const fileName = this.activeTab === 'service-public' 
+        ? `service-public_${this.what.replace(/\s+/g, '_')}.csv`
+        : `masecurite_${this.what.replace(/\s+/g, '_')}.csv`;
+      a.download = fileName;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
       alert('Export CSV échoué.');
       console.error(e);
     } finally {
-      this.loading = false;
+      this.loadingServicePublic = false;
       this.loadingStep = '';
     }
   }
 
   async onExportXlsx() {
     if (!this.what.trim()) return;
+    
+    const rows = this.currentRows;
+    if (rows.length === 0) return;
+
     try {
-      this.loading = true;
+      this.loadingServicePublic = true;
       this.loadingStep = '📊 Génération du fichier Excel...';
       
       const blob = await this.api.downloadXlsx(
@@ -136,14 +170,17 @@ export class AppComponent {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `annuaire_${this.what.replace(/\s+/g, '_')}.xlsx`;
+      const fileName = this.activeTab === 'service-public' 
+        ? `service-public_${this.what.replace(/\s+/g, '_')}.xlsx`
+        : `masecurite_${this.what.replace(/\s+/g, '_')}.xlsx`;
+      a.download = fileName;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
       alert('Export XLSX échoué.');
       console.error(e);
     } finally {
-      this.loading = false;
+      this.loadingServicePublic = false;
       this.loadingStep = '';
     }
   }

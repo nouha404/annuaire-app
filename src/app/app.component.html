@@ -1,130 +1,301 @@
-<div class="min-h-screen bg-slate-50">
-  <header class="px-6 py-4 bg-white shadow sticky top-0 z-10">
-    <h1 class="text-2xl font-semibold">🕵️ get-infos (Scraping Unifié)</h1>
-    <p class="text-sm text-slate-500">Service-Public + MaSécurité | Selenium + Express + Angular</p>
+<div class="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+  
+  <!-- HEADER -->
+  <header class="bg-white shadow-md sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-3xl font-bold text-gray-900 flex items-center gap-3">
+            🕵️ <span class="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">get-infos</span>
+          </h1>
+          <p class="text-sm text-gray-500 mt-1">Annuaire multi-sources | Scraping intelligent</p>
+        </div>
+      </div>
+    </div>
   </header>
 
-  <main class="px-6 py-6 max-w-7xl mx-auto">
-    <form (ngSubmit)="onSearch()" class="grid md:grid-cols-12 gap-3 items-end">
-      <div class="md:col-span-4">
-        <label class="block text-sm mb-1 font-medium">Qui / Quoi *</label>
-        <input [(ngModel)]="what" name="what" required
-          class="w-full border rounded-xl px-4 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="Ex: Peloton motorisé">
-      </div>
+  <!-- MAIN CONTENT -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    
+    <!-- FORMULAIRE DE RECHERCHE -->
+    <div class="bg-white rounded-2xl shadow-lg p-6 mb-8">
+      <form (ngSubmit)="onSearch()">
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+          
+          <div class="md:col-span-5">
+            <label class="block text-sm font-semibold text-gray-700 mb-2">
+              Qui / Quoi ? <span class="text-red-500">*</span>
+            </label>
+            <input 
+              [(ngModel)]="what" 
+              name="what" 
+              required
+              type="text"
+              placeholder="Ex: Gendarmerie, Peloton, Commissariat..."
+              class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all"
+            />
+          </div>
 
-      <div class="md:col-span-3">
-        <label class="block text-sm mb-1 font-medium">Où (ville ou CP)</label>
-        <input [(ngModel)]="where" name="where"
-          class="w-full border rounded-xl px-4 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="Ex: Paris">
-      </div>
+          <div class="md:col-span-4">
+            <label class="block text-sm font-semibold text-gray-700 mb-2">
+              Où ? (optionnel)
+            </label>
+            <input 
+              [(ngModel)]="where" 
+              name="where"
+              type="text"
+              placeholder="Ville ou code postal"
+              class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all"
+            />
+          </div>
 
-      <div class="md:col-span-2">
-        <label class="block text-sm mb-1 font-medium">Pages Service-Public</label>
-        <select [(ngModel)]="maxPages" name="maxPages"
-          class="w-full border rounded-xl px-4 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <option [value]="1">1 page</option>
-          <option [value]="2">2 pages</option>
-          <option [value]="3">3 pages</option>
-          <option [value]="5">5 pages</option>
-          <option [value]="10">10 pages</option>
-        </select>
-      </div>
+          <div class="md:col-span-3">
+            <label class="block text-sm font-semibold text-gray-700 mb-2">
+              Pages max
+            </label>
+            <select 
+              [(ngModel)]="maxPages" 
+              name="maxPages"
+              class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white">
+              <option [value]="1">1 (20 résultats)</option>
+              <option [value]="3">3 (60 résultats)</option>
+              <option [value]="5">5 (100 résultats)</option>
+              <option [value]="10">10 (200 résultats)</option>
+              <option [value]="999">Tout (illimité)</option>
+            </select>
+          </div>
+        </div>
 
-      <div class="md:col-span-3 flex flex-wrap gap-2">
-        <button [disabled]="loading" 
-          class="flex-1 rounded-xl px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50" 
-          type="submit">
-          {{ loading ? 'Recherche…' : 'Rechercher' }}
-        </button>
-        <button type="button" (click)="onExportCsv()" 
-          [disabled]="!rows.length || loading"
-          class="rounded-xl px-4 py-2 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-          title="Exporter en CSV">
-          CSV
-        </button>
-        <button type="button" (click)="onExportXlsx()" 
-          [disabled]="!rows.length || loading"
-          class="rounded-xl px-4 py-2 bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-          title="Exporter en Excel">
-          XLSX
-        </button>
-      </div>
-    </form>
+        <div class="flex flex-wrap gap-3 mt-6">
+          <button 
+            type="submit"
+            [disabled]="isLoading || !what.trim()"
+            class="flex-1 sm:flex-none px-8 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold rounded-xl hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg">
+            <span *ngIf="!isLoading">🔍 Rechercher</span>
+            <span *ngIf="isLoading">⏳ Recherche...</span>
+          </button>
 
-    <div *ngIf="error" class="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl">
-      <p class="text-red-600 font-medium">❌ {{error}}</p>
+          <button 
+            type="button"
+            (click)="onExportCsv()"
+            [disabled]="currentRows.length === 0 || isLoading"
+            class="px-6 py-3 bg-emerald-600 text-white font-semibold rounded-xl hover:bg-emerald-700 disabled:opacity-50 transition-all">
+            📄 CSV
+          </button>
+
+          <button 
+            type="button"
+            (click)="onExportXlsx()"
+            [disabled]="currentRows.length === 0 || isLoading"
+            class="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-all">
+            📊 Excel
+          </button>
+        </div>
+      </form>
     </div>
 
-    <div *ngIf="!loading && !error && rows.length > 0" class="mt-4 flex items-center justify-between text-slate-600">
-      <span class="text-sm">✅ <strong>{{rows.length}}</strong> résultats uniques trouvés</span>
-      <span class="text-xs text-slate-500">Fusion de 2 sources sans doublons</span>
+    <!-- ALERTE ERREUR -->
+    <div *ngIf="currentError" class="bg-red-50 border-2 border-red-200 rounded-xl p-4 mb-6">
+      <div class="flex items-start gap-3">
+        <span class="text-2xl">❌</span>
+        <div>
+          <h3 class="font-semibold text-red-900">Erreur</h3>
+          <p class="text-red-700 text-sm mt-1">{{currentError}}</p>
+        </div>
+      </div>
     </div>
 
-    <div class="mt-6 bg-white rounded-2xl shadow overflow-auto">
-      <table class="min-w-full text-sm">
-        <thead class="bg-slate-100">
-          <tr>
-            <th class="text-left p-3 font-semibold w-32">Source</th>
-            <th class="text-left p-3 font-semibold">Nom</th>
-            <th class="text-left p-3 font-semibold">Adresse</th>
-            <th class="text-left p-3 font-semibold">Téléphone</th>
-            <th class="text-left p-3 font-semibold">Ville</th>
-            <th class="text-left p-3 font-semibold">Type</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr *ngFor="let r of rows; let i = index" class="border-t hover:bg-slate-50">
-            <td class="p-3">
-              <span class="text-xs px-2 py-1 rounded-full font-medium" 
-                    [class.bg-blue-100]="r.source === 'Service-Public'"
-                    [class.text-blue-700]="r.source === 'Service-Public'"
-                    [class.bg-green-100]="r.source === 'MaSécurité'"
-                    [class.text-green-700]="r.source === 'MaSécurité'"
-                    [class.bg-purple-100]="r.source.includes('+')"
-                    [class.text-purple-700]="r.source.includes('+')">
-                {{r.source}}
-              </span>
-            </td>
-            <td class="p-3">
-              <a *ngIf="r.url" [href]="r.url" target="_blank" 
-                class="text-blue-700 underline font-medium hover:text-blue-900">
-                {{r.nom}}
-              </a>
-              <span *ngIf="!r.url" class="font-medium">{{r.nom}}</span>
-            </td>
-            <td class="p-3 text-sm max-w-xs">{{r.adresse}}</td>
-            <td class="p-3">
-              <a *ngIf="r.telephone" [href]="'tel:'+r.telephone" 
-                class="underline text-slate-700 hover:text-slate-900">
-                {{r.telephone}}
-              </a>
-              <span *ngIf="!r.telephone" class="text-slate-400 italic">-</span>
-            </td>
-            <td class="p-3">{{r.ville || '-'}}</td>
-            <td class="p-3">
-              <span class="text-xs px-2 py-1 rounded-full bg-slate-100">{{r.type}}</span>
-            </td>
-          </tr>
-          <tr *ngIf="!rows.length && !loading">
-            <td colspan="6" class="p-8 text-center text-slate-500">
-              <p class="text-lg">🔍 Aucun résultat trouvé</p>
-              <p class="text-sm mt-2">Essayez une autre recherche</p>
-            </td>
-          </tr>
-          <tr *ngIf="loading">
-            <td colspan="6" class="p-8 text-center text-slate-500">
-              <div class="flex flex-col items-center gap-3">
-                <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
-                <p class="text-lg">⏳ Recherche en cours...</p>
-                <p class="text-sm">Scraping de 2 sources (Service-Public + MaSécurité)</p>
-                <p class="text-xs text-slate-400">Cela peut prendre 1-2 minutes</p>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+    <!-- LOADER AVEC PROGRESSION -->
+    <div *ngIf="isLoading" class="bg-white rounded-xl shadow-lg p-12 text-center mb-8">
+      <div class="flex flex-col items-center gap-6">
+        <div class="relative">
+          <div class="w-20 h-20 border-4 border-blue-200 rounded-full"></div>
+          <div class="w-20 h-20 border-4 border-blue-600 rounded-full animate-spin border-t-transparent absolute top-0 left-0"></div>
+        </div>
+        
+        <div>
+          <h3 class="text-xl font-semibold text-gray-900 mb-2">🔍 Scraping en cours...</h3>
+          <p class="text-gray-600 mb-2">{{loadingStep}}</p>
+          
+          <!-- Barre de progression -->
+          <div class="w-full max-w-md mx-auto mt-4">
+            <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div class="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-300" 
+                   [style.width.%]="progress"></div>
+            </div>
+            <p class="text-sm text-gray-500 mt-2">{{progress}}% terminé</p>
+          </div>
+        </div>
+      </div>
     </div>
+
+    <!-- ONGLETS -->
+    <div *ngIf="!isLoading && (rowsServicePublic.length > 0 || rowsMaSecurite.length > 0)" 
+         class="bg-white rounded-2xl shadow-lg overflow-hidden mb-8">
+      
+      <!-- Headers des onglets -->
+      <div class="border-b border-gray-200">
+        <nav class="flex -mb-px">
+          <button
+            (click)="switchTab('service-public')"
+            [class.border-blue-500]="activeTab === 'service-public'"
+            [class.text-blue-600]="activeTab === 'service-public'"
+            [class.border-transparent]="activeTab !== 'service-public'"
+            [class.text-gray-500]="activeTab !== 'service-public'"
+            class="px-6 py-4 border-b-2 font-semibold text-sm hover:text-blue-600 transition-colors flex items-center gap-2">
+            <span class="text-lg">🏛️</span>
+            Service-Public
+            <span class="ml-2 px-2 py-0.5 text-xs rounded-full"
+                  [class.bg-blue-100]="activeTab === 'service-public'"
+                  [class.text-blue-700]="activeTab === 'service-public'"
+                  [class.bg-gray-100]="activeTab !== 'service-public'"
+                  [class.text-gray-600]="activeTab !== 'service-public'">
+              {{rowsServicePublic.length}}
+            </span>
+          </button>
+
+          <button
+            (click)="switchTab('masecurite')"
+            [class.border-green-500]="activeTab === 'masecurite'"
+            [class.text-green-600]="activeTab === 'masecurite'"
+            [class.border-transparent]="activeTab !== 'masecurite'"
+            [class.text-gray-500]="activeTab !== 'masecurite'"
+            class="px-6 py-4 border-b-2 font-semibold text-sm hover:text-green-600 transition-colors flex items-center gap-2">
+            <span class="text-lg">🚔</span>
+            MaSécurité
+            <span class="ml-2 px-2 py-0.5 text-xs rounded-full"
+                  [class.bg-green-100]="activeTab === 'masecurite'"
+                  [class.text-green-700]="activeTab === 'masecurite'"
+                  [class.bg-gray-100]="activeTab !== 'masecurite'"
+                  [class.text-gray-600]="activeTab !== 'masecurite'">
+              {{rowsMaSecurite.length}}
+            </span>
+          </button>
+        </nav>
+      </div>
+
+      <!-- Contenu de l'onglet actif -->
+      <div class="p-6">
+        
+        <!-- Statistiques -->
+        <div class="grid grid-cols-3 gap-4 mb-6 text-center">
+          <div class="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4">
+            <div class="text-2xl font-bold text-blue-600">{{currentRows.length}}</div>
+            <div class="text-sm text-gray-600 mt-1">Résultats</div>
+          </div>
+          <div class="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-4">
+            <div class="text-2xl font-bold text-purple-600">{{maxPages === 999 ? '∞' : maxPages}}</div>
+            <div class="text-sm text-gray-600 mt-1">Pages</div>
+          </div>
+          <div class="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4">
+            <div class="text-2xl font-bold text-green-600">100%</div>
+            <div class="text-sm text-gray-600 mt-1">Complet</div>
+          </div>
+        </div>
+
+        <!-- Tableau -->
+        <div class="overflow-x-auto rounded-xl border border-gray-200">
+          <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase">#</th>
+                <th class="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase">Nom</th>
+                <th class="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase">Adresse</th>
+                <th class="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase">Téléphone</th>
+                <th class="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase">Ville</th>
+                <th class="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase">Type</th>
+              </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+              <tr *ngFor="let r of currentRows; let i = index" 
+                  class="hover:bg-blue-50 transition-colors">
+                
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
+                  {{i + 1}}
+                </td>
+
+                <td class="px-6 py-4">
+                  <a *ngIf="r.url" 
+                     [href]="r.url" 
+                     target="_blank"
+                     class="text-blue-600 hover:text-blue-800 font-medium hover:underline flex items-center gap-2 group">
+                    <span>{{r.nom || 'Sans nom'}}</span>
+                    <svg class="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                    </svg>
+                  </a>
+                  <span *ngIf="!r.url" class="text-gray-900 font-medium">
+                    {{r.nom || 'Sans nom'}}
+                  </span>
+                </td>
+
+                <td class="px-6 py-4 text-sm text-gray-700 max-w-xs">
+                  <div class="truncate" [title]="r.adresse">
+                    {{r.adresse || '—'}}
+                  </div>
+                </td>
+
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <a *ngIf="r.telephone" 
+                     [href]="'tel:' + r.telephone"
+                     class="text-indigo-600 hover:text-indigo-800 font-mono text-sm hover:underline">
+                    📞 {{r.telephone}}
+                  </a>
+                  <span *ngIf="!r.telephone" class="text-gray-400 text-sm italic">
+                    Non renseigné
+                  </span>
+                </td>
+
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                  {{r.ville || '—'}}
+                </td>
+
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <span class="px-3 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded-full">
+                    {{r.type}}
+                  </span>
+                </td>
+
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Footer du tableau -->
+        <div class="mt-4 flex justify-between items-center text-sm text-gray-600">
+          <span>Total : <strong class="text-gray-900">{{currentRows.length}}</strong> résultats</span>
+          <span class="text-xs">Source : {{activeTab === 'service-public' ? 'Service-Public.fr' : 'MaSécurité.gouv.fr'}}</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- MESSAGE AUCUN RÉSULTAT -->
+    <div *ngIf="!isLoading && rowsServicePublic.length === 0 && rowsMaSecurite.length === 0 && what" 
+         class="bg-white rounded-xl shadow-lg p-12 text-center">
+      <div class="text-6xl mb-4">🔍</div>
+      <h3 class="text-xl font-semibold text-gray-900 mb-2">Aucun résultat trouvé</h3>
+      <p class="text-gray-600 mb-6">Essayez avec d'autres mots-clés</p>
+      <button 
+        (click)="what = ''; where = ''" 
+        class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+        Nouvelle recherche
+      </button>
+    </div>
+
   </main>
+
+  <!-- FOOTER -->
+  <footer class="bg-white border-t border-gray-200 mt-12">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div class="flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-gray-600">
+        <span>Powered by <strong class="text-gray-900">Selenium + Angular + Express</strong></span>
+        <div class="flex gap-4">
+          <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">✓ Service-Public.fr</span>
+          <span class="px-3 py-1 bg-gray-200 text-gray-500 rounded-full text-xs">⏳ MaSécurité (bientôt)</span>
+        </div>
+      </div>
+    </div>
+  </footer>
+
 </div>
