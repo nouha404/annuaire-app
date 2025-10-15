@@ -7,13 +7,25 @@ import { scrape as scrapeServicePublic } from './api/scraper';
 import { scrapeMaSecurite } from './api/scraper-masecurite';
 
 const app = express();
-const PORT = process.env['PORT'] || 3000;
+const PORT = Number(process.env.PORT || 3000);
 
-/* ============================================================
- * CONFIG DE BASE EXPRESS
- * ============================================================ */
-app.use(cors());
+// --- CORS whitelist (utile si front séparé) ---
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+app.set('trust proxy', 1); // Railway/Proxy
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.length === 0) return cb(null, true); // même origin / dev
+    return allowedOrigins.includes(origin) ? cb(null, true) : cb(new Error('Not allowed by CORS'));
+  }
+}));
+
 app.use(express.json());
+
+// Servez le build Angular si vous déployez front+api ensemble
 app.use(express.static('dist/annuaire-app/browser'));
 
 /* ============================================================
@@ -36,13 +48,10 @@ interface UnifiedRow {
 }
 
 /* ============================================================
- * SYSTÈME DE LOGS SÉCURISÉ
+ * LOGS SÉCURISÉS (pas de récursion)
  * ============================================================ */
-
-// Stockage des logs par sessionId
 const logsStore = new Map<string, string[]>();
 
-// Sauvegarde des consoles d'origine
 const ORIG_CONSOLE = {
   log: console.log.bind(console),
   info: console.info.bind(console),
@@ -50,129 +59,93 @@ const ORIG_CONSOLE = {
   error: console.error.bind(console),
 };
 
-// Formatage sûr des arguments (évite JSON.stringify infini)
 function formatArgs(args: any[]): string {
-  return args
-    .map((a) =>
-      typeof a === 'string'
-        ? a
-        : util.inspect(a, {
-            depth: 4,
-            colors: false,
-            maxArrayLength: 200,
-            maxStringLength: 2000,
-            compact: 3,
-          })
-    )
-    .join(' ');
+  return args.map(a => typeof a === 'string'
+    ? a
+    : util.inspect(a, { depth: 4, colors: false, maxArrayLength: 200, maxStringLength: 2000, compact: 3 })
+  ).join(' ');
 }
 
-// Ajoute un log à la session
 function appendLog(sessionId: string, message: string) {
   if (!logsStore.has(sessionId)) logsStore.set(sessionId, []);
-  const timestamp = new Date().toLocaleTimeString();
-  logsStore.get(sessionId)!.push(`[${timestamp}] ${message}`);
+  const ts = new Date().toLocaleTimeString();
+  logsStore.get(sessionId)!.push(`[${ts}] ${message}`);
 }
 
-// Émet un log côté serveur + store
 function emitLog(sessionId: string, message: string) {
   appendLog(sessionId, message);
   ORIG_CONSOLE.log(message);
 }
 
-// Capture console.log / console.error sans récursion
 function captureConsoleLogs(sessionId: string) {
   const restore = {
-    log: console.log,
-    info: console.info,
-    warn: console.warn,
-    error: console.error,
+    log: console.log, info: console.info, warn: console.warn, error: console.error,
   };
 
-  console.log = (...args: any[]) => {
-    const msg = formatArgs(args);
-    appendLog(sessionId, msg);
-    ORIG_CONSOLE.log(msg);
-  };
+  console.log = (...args: any[]) => { const msg = formatArgs(args); appendLog(sessionId, msg); ORIG_CONSOLE.log(msg); };
+  console.info = (...args: any[]) => { const msg = formatArgs(args); appendLog(sessionId, msg); ORIG_CONSOLE.info(msg); };
+  console.warn = (...args: any[]) => { const msg = formatArgs(args); appendLog(sessionId, msg); ORIG_CONSOLE.warn(msg); };
+  console.error = (...args: any[]) => { const msg = '❌ ' + formatArgs(args); appendLog(sessionId, msg); ORIG_CONSOLE.error(msg); };
 
-  console.info = (...args: any[]) => {
-    const msg = formatArgs(args);
-    appendLog(sessionId, msg);
-    ORIG_CONSOLE.info(msg);
-  };
-
-  console.warn = (...args: any[]) => {
-    const msg = formatArgs(args);
-    appendLog(sessionId, msg);
-    ORIG_CONSOLE.warn(msg);
-  };
-
-  console.error = (...args: any[]) => {
-    const msg = '❌ ' + formatArgs(args);
-    appendLog(sessionId, msg);
-    ORIG_CONSOLE.error(msg);
-  };
-
-  // Fonction de restauration
-  return () => {
-    console.log = restore.log;
-    console.info = restore.info;
-    console.warn = restore.warn;
-    console.error = restore.error;
-  };
+  return () => { console.log = restore.log; console.info = restore.info; console.warn = restore.warn; console.error = restore.error; };
 }
 
 /* ============================================================
- * SSE LOG STREAM (temps réel)
+ * HEALTHCHECK (Railway)
+ * ============================================================ */
+app.get('/api/health', (_req, res) => res.json({ ok: true }));
+
+/* ============================================================
+ * SSE LOG STREAM (temps réel + heartbeat)
  * ============================================================ */
 app.get('/api/logs/:sessionId', (req: Request, res: Response) => {
   const { sessionId } = req.params;
 
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform'); // no-transform évite la compression proxy
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('Access-Control-Allow-Origin', '*');
 
+  res.flushHeaders?.(); // si dispo
+
   res.write('data: {"type":"connected"}\n\n');
 
-  // Envoyer les logs existants
   if (logsStore.has(sessionId)) {
     for (const log of logsStore.get(sessionId)!) {
       res.write(`data: ${JSON.stringify({ type: 'log', message: log })}\n\n`);
     }
   }
 
-  // Polling
   let lastIndex = logsStore.get(sessionId)?.length || 0;
-  const interval = setInterval(() => {
+  const pushInterval = setInterval(() => {
     if (!logsStore.has(sessionId)) return;
     const logs = logsStore.get(sessionId)!;
-    const newLogs = logs.slice(lastIndex);
-    for (const log of newLogs) {
+    for (const log of logs.slice(lastIndex)) {
       res.write(`data: ${JSON.stringify({ type: 'log', message: log })}\n\n`);
     }
     lastIndex = logs.length;
   }, 500);
 
+  // Heartbeat pour garder la connexion vivante derrière proxies
+  const heartbeat = setInterval(() => res.write(':\n\n'), 15000);
+
   req.on('close', () => {
-    clearInterval(interval);
+    clearInterval(pushInterval);
+    clearInterval(heartbeat);
     setTimeout(() => logsStore.delete(sessionId), 5 * 60 * 1000);
   });
 });
 
 /* ============================================================
- * ENDPOINT PRINCIPAL DE RECHERCHE
+ * ENDPOINT PRINCIPAL
  * ============================================================ */
 app.post('/api/search', async (req: Request, res: Response) => {
   const { what, where = '', maxPages = 3, sessionId } = req.body;
 
-  if (!what) {
-    return res.status(400).json({ error: 'Le paramètre "what" est requis' });
-  }
+  if (!what) return res.status(400).json({ error: 'Le paramètre "what" est requis' });
 
   const sid = sessionId || `session_${Date.now()}`;
   logsStore.set(sid, []);
-
   const restoreConsole = captureConsoleLogs(sid);
 
   try {
@@ -185,7 +158,7 @@ app.post('/api/search', async (req: Request, res: Response) => {
 
     const allRows: UnifiedRow[] = [];
 
-    // 1️⃣ SERVICE-PUBLIC.FR
+    // Service-Public
     emitLog(sid, '📍 [1/2] Scraping Service-Public.fr...\n');
     try {
       const spResults = await scrapeServicePublic(what, where, maxPages);
@@ -206,11 +179,11 @@ app.post('/api/search', async (req: Request, res: Response) => {
         })
       );
       emitLog(sid, `   ✅ Service-Public: ${spResults.length} résultats\n`);
-    } catch (error: any) {
-      emitLog(sid, `   ❌ Erreur Service-Public: ${error.message}\n`);
+    } catch (e: any) {
+      emitLog(sid, `   ❌ Erreur Service-Public: ${e.message}\n`);
     }
 
-    // 2️⃣ MASÉCURITÉ
+    // MaSécurité
     emitLog(sid, '📍 [2/2] MaSécurité.interieur.gouv.fr...\n');
     try {
       const msResults = await scrapeMaSecurite(what, where);
@@ -226,13 +199,12 @@ app.post('/api/search', async (req: Request, res: Response) => {
         })
       );
       emitLog(sid, `   ✅ MaSécurité: ${msResults.length} résultats\n`);
-    } catch (error: any) {
-      emitLog(sid, `   ❌ Erreur MaSécurité: ${error.message}\n`);
+    } catch (e: any) {
+      emitLog(sid, `   ❌ Erreur MaSécurité: ${e.message}\n`);
     }
 
-    // STATISTIQUES FINALES
-    const spCount = allRows.filter((r) => r.source === 'Service-Public').length;
-    const msCount = allRows.filter((r) => r.source === 'MaSécurité').length;
+    const spCount = allRows.filter(r => r.source === 'Service-Public').length;
+    const msCount = allRows.filter(r => r.source === 'MaSécurité').length;
 
     emitLog(sid, '╔═══════════════════════════════════════╗');
     emitLog(sid, '║          📊 STATISTIQUES FINALES      ║');
@@ -248,16 +220,16 @@ app.post('/api/search', async (req: Request, res: Response) => {
       stats: { total: allRows.length, servicePublic: spCount, maSecurite: msCount },
       sessionId: sid,
     });
-  } catch (error: any) {
-    emitLog(sid, `❌ Erreur globale: ${error.message}`);
-    res.status(500).json({ error: error.message });
+  } catch (e: any) {
+    emitLog(sid, `❌ Erreur globale: ${e.message}`);
+    res.status(500).json({ error: e.message });
   } finally {
     restoreConsole();
   }
 });
 
 /* ============================================================
- * EXPORT EXCEL
+ * EXPORT XLSX
  * ============================================================ */
 app.post('/api/download/xlsx', async (req: Request, res: Response) => {
   const { what, where = '', maxPages = 3 } = req.body;
@@ -267,27 +239,20 @@ app.post('/api/download/xlsx', async (req: Request, res: Response) => {
     const msResults = await scrapeMaSecurite(what, where);
 
     const allRows = [
-      ...spResults.map((r) => ({ ...r, source: 'Service-Public' })),
-      ...msResults.map((r) => ({ ...r, source: 'MaSécurité' })),
+      ...spResults.map(r => ({ ...r, source: 'Service-Public' })),
+      ...msResults.map(r => ({ ...r, source: 'MaSécurité' })),
     ];
 
     const ws = XLSX.utils.json_to_sheet(allRows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Résultats');
-
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="annuaire_${what.replace(/\s+/g, '_')}.xlsx"`
-    );
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    );
+    res.setHeader('Content-Disposition', `attachment; filename="annuaire_${what.replace(/\s+/g, '_')}.xlsx"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buffer);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -298,7 +263,6 @@ function extractVille(adresse: string): string {
   const match = adresse.match(/\d{5}\s+(.+?)$/);
   return match ? match[1].trim() : '';
 }
-
 function detectType(nom: string): string {
   const lower = nom.toLowerCase();
   if (lower.includes('commissariat')) return 'Commissariat';
@@ -310,15 +274,15 @@ function detectType(nom: string): string {
 }
 
 /* ============================================================
- * FALLBACK ANGULAR
+ * FALLBACK ANGULAR (si front servi par Express)
  * ============================================================ */
-app.get('*', (req: Request, res: Response) => {
+app.get('*', (_req: Request, res: Response) => {
   res.sendFile('index.html', { root: 'dist/annuaire-app/browser' });
 });
 
 /* ============================================================
- * LANCEMENT SERVEUR
+ * START
  * ============================================================ */
 app.listen(PORT, () => {
-  ORIG_CONSOLE.log(`🚀 Serveur démarré sur http://localhost:${PORT}`);
+  ORIG_CONSOLE.log(`🚀 Serveur démarré sur port ${PORT}`);
 });
