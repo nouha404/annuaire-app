@@ -1,3 +1,4 @@
+
 import { Builder, Browser, By, until, WebDriver } from 'selenium-webdriver';
 import { Options as ChromeOptions } from 'selenium-webdriver/chrome';
 
@@ -32,6 +33,7 @@ async function createDriver(): Promise<WebDriver> {
     '--window-size=1920,1080',
     '--disable-setuid-sandbox',
     '--disable-software-rasterizer',
+    '--disable-blink-features=AutomationControlled',
     '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
   );
 
@@ -40,17 +42,25 @@ async function createDriver(): Promise<WebDriver> {
     options.setChromeBinaryPath(chromeBin);
   }
 
-  return await new Builder()
+  const driver = await new Builder()
     .forBrowser(Browser.CHROME)
     .setChromeOptions(options)
     .build();
+
+  // Anti-détection
+  await driver.executeScript(`
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+  `);
+
+  return driver;
 }
 
 async function getAllOrganismUrls(driver: WebDriver): Promise<string[]> {
-  const allUrls: string[] = [];
+  const urlsSet = new Set<string>();
   let clickCount = 0;
-  const maxClicks = 20; // Limite de sécurité
-  let previousLinkCount = 0; // AJOUTÉ
+  const maxClicks = 100;
+  let noNewResultsCount = 0;
 
   console.log('\n╔════════════════════════════════════════╗');
   console.log('║  📜 RÉCUPÉRATION DE TOUS LES LIENS    ║');
@@ -59,39 +69,48 @@ async function getAllOrganismUrls(driver: WebDriver): Promise<string[]> {
   while (clickCount < maxClicks) {
     console.log(`📍 Itération ${clickCount + 1}:`);
 
-    // Récupérer les liens actuellement visibles
-    let currentLinkCount = 0; // AJOUTÉ
+    const previousCount = urlsSet.size;
+
     try {
       const links = await driver.findElements(
         By.css('a.fr-link[data-test="searchResult-link"]')
       );
       
-      currentLinkCount = links.length; // AJOUTÉ
       console.log(`   → ${links.length} liens visibles sur la page`);
 
-      // Extraire les URLs
       for (const link of links) {
         try {
           const href = await link.getAttribute('href');
-          if (href && !allUrls.includes(href)) {
-            allUrls.push(href);
+          if (href && href.trim().length > 0) {
+            urlsSet.add(href);
           }
-        } catch (e) {
-          // Ignorer les erreurs d'éléments obsolètes
-        }
+        } catch (e) {}
       }
 
-      console.log(`   → ${allUrls.length} liens uniques collectés au total`);
-
+      console.log(`   → ${urlsSet.size} liens uniques collectés au total`);
     } catch (e) {
       console.error('   ❌ Erreur lors de la récupération des liens:', (e as Error).message);
       break;
     }
 
-    // Chercher le bouton "Afficher les 20 résultats suivants"
+    const newLinksAdded = urlsSet.size - previousCount;
+    console.log(`   → ${newLinksAdded} nouveaux liens ajoutés`);
+
+    if (newLinksAdded === 0) {
+      noNewResultsCount++;
+      console.log(`   ⚠️ Aucun nouveau lien (${noNewResultsCount}/3)`);
+      
+      if (noNewResultsCount >= 3) {
+        console.log('\n✅ Aucun nouveau résultat après 3 tentatives - Fin\n');
+        break;
+      }
+    } else {
+      noNewResultsCount = 0;
+    }
+
     console.log('   🔍 Recherche du bouton "Suivant"...');
     
-    const nextButtons = await driver.findElements(
+    let nextButtons = await driver.findElements(
       By.css('button#btn-next20[data-test="pagerSearchAnnuaire"]')
     );
 
@@ -102,9 +121,12 @@ async function getAllOrganismUrls(driver: WebDriver): Promise<string[]> {
       break;
     }
 
-    // Vérifier si le bouton est visible et cliquable
     try {
       const button = nextButtons[0];
+      
+      await driver.executeScript('arguments[0].scrollIntoView({block: "center", behavior: "smooth"});', button);
+      await driver.sleep(1500); // AUGMENTÉ: 1s → 1.5s
+
       const isDisplayed = await button.isDisplayed();
       const isEnabled = await button.isEnabled();
 
@@ -115,46 +137,40 @@ async function getAllOrganismUrls(driver: WebDriver): Promise<string[]> {
         break;
       }
 
-      // Scroll jusqu'au bouton
-      await driver.executeScript('arguments[0].scrollIntoView({block: "center"});', button);
-      await driver.sleep(500);
-
       console.log('   ⏳ Clic sur le bouton...');
 
-      // Cliquer avec JavaScript (plus fiable)
       await driver.executeScript('arguments[0].click();', button);
       
-      console.log('   ✅ Clic effectué, attente du chargement...\n');
+      console.log('   ✅ Clic effectué, attente du chargement...');
 
-      // Attendre que de nouveaux résultats se chargent
-      await driver.sleep(3000);
+      await driver.sleep(5000); // AUGMENTÉ: 4s → 5s
 
-      // Vérifier que de nouveaux liens sont apparus
-      const newLinks = await driver.findElements(
-        By.css('a.fr-link[data-test="searchResult-link"]')
-      );
-
-      // CORRIGÉ : Utiliser currentLinkCount au lieu de links.length
-      if (newLinks.length === currentLinkCount) {
-        console.log('⚠️ Aucun nouveau résultat chargé - Fin possible\n');
-        
-        // Essayer encore une fois au cas où
-        if (clickCount < 2) {
-          await driver.sleep(2000);
-          clickCount++;
-          continue;
-        }
-        break;
+      try {
+        await driver.wait(async () => {
+          const currentLinks = await driver.findElements(
+            By.css('a.fr-link[data-test="searchResult-link"]')
+          );
+          return currentLinks.length > 0;
+        }, 5000);
+      } catch (e) {
+        console.log('   ⚠️ Timeout en attendant les nouveaux résultats');
       }
 
-      previousLinkCount = currentLinkCount; // AJOUTÉ
       clickCount++;
 
     } catch (e) {
       console.error('   ❌ Erreur lors du clic:', (e as Error).message);
+      
+      if (clickCount < 2) {
+        await driver.sleep(3000);
+        clickCount++;
+        continue;
+      }
       break;
     }
   }
+
+  const allUrls = Array.from(urlsSet);
 
   console.log('╔════════════════════════════════════════╗');
   console.log(`║  ✅ TOTAL: ${allUrls.length} LIENS COLLECTÉS       ║`);
@@ -164,8 +180,28 @@ async function getAllOrganismUrls(driver: WebDriver): Promise<string[]> {
 }
 
 async function scrapeDetailPage(driver: WebDriver, url: string): Promise<ScraperRow> {
-  await driver.get(url);
-  await driver.sleep(600);
+  try {
+    await driver.get(url);
+  } catch (e) {
+    console.log('   ⚠️ Erreur chargement URL');
+  }
+  
+  try {
+    await driver.wait(until.elementLocated(By.css('body')), 10000);
+  } catch (e) {
+    console.log('   ⚠️ Timeout body');
+  }
+  
+  await driver.sleep(3500); // AUGMENTÉ: 3s → 3.5s
+  
+  try {
+    await driver.wait(async () => {
+      const readyState = await driver.executeScript('return document.readyState');
+      return readyState === 'complete';
+    }, 5000);
+  } catch (e) {
+    console.log('   ⚠️ Document pas complètement chargé');
+  }
 
   const data: ScraperRow = {
     url,
@@ -179,38 +215,138 @@ async function scrapeDetailPage(driver: WebDriver, url: string): Promise<Scraper
     longitude: ''
   };
 
-  // NOM
+  // NOM - 6 tentatives
   try {
-    const titleEl = await driver.findElement(By.id('titlePage'));
-    data.nom = (await titleEl.getText()).trim();
+    try {
+      const titleEl = await driver.findElement(By.id('titlePage'));
+      const text = (await titleEl.getText()).trim();
+      if (text && text.length > 2) data.nom = text;
+    } catch (e) {}
+
+    if (!data.nom) {
+      try {
+        const h1 = await driver.findElement(By.css('h1'));
+        const text = (await h1.getText()).trim();
+        if (text && text.length > 2) data.nom = text;
+      } catch (e) {}
+    }
+
+    if (!data.nom) {
+      try {
+        const title = await driver.findElement(By.css('.fr-h1, .fr-title, [class*="title"]'));
+        const text = (await title.getText()).trim();
+        if (text && text.length > 2) data.nom = text;
+      } catch (e) {}
+    }
+
+    if (!data.nom) {
+      try {
+        const pageTitle = await driver.getTitle();
+        const text = pageTitle
+          .replace(' - Service-Public.fr', '')
+          .replace('Service-Public.fr', '')
+          .replace(' | ', '')
+          .trim();
+        if (text && text.length > 2 && 
+            !text.includes('Erreur') &&
+            !text.includes('renforce temporairement') &&
+            !text.includes('dispositif d\'accès')) {
+          data.nom = text;
+        }
+      } catch (e) {}
+    }
+
+    if (!data.nom) {
+      try {
+        const breadcrumbs = await driver.findElements(By.css('.fr-breadcrumb__link'));
+        if (breadcrumbs.length > 0) {
+          const lastBreadcrumb = breadcrumbs[breadcrumbs.length - 1];
+          const text = (await lastBreadcrumb.getText()).trim();
+          if (text && text.length > 2) data.nom = text;
+        }
+      } catch (e) {}
+    }
+
+    if (!data.nom) {
+      try {
+        const ogTitle = await driver.findElement(By.css('meta[property="og:title"]'));
+        const text = (await ogTitle.getAttribute('content')).trim();
+        if (text && text.length > 2) data.nom = text;
+      } catch (e) {}
+    }
+
+    if (!data.nom) {
+      const urlParts = url.split('/');
+      const lastPart = urlParts[urlParts.length - 1];
+      data.nom = `Organisme-${lastPart.substring(0, 8)}`;
+      console.log('   ⚠️ Nom extrait de l\'URL');
+    }
+
   } catch (e) {
-    // Ignorer
+    const urlParts = url.split('/');
+    const lastPart = urlParts[urlParts.length - 1];
+    data.nom = `Organisme-${lastPart.substring(0, 8)}`;
+    console.log('   ⚠️ Erreur extraction nom');
   }
 
   // ADRESSE
   try {
     const addrParts: string[] = [];
-    const addrElements = await driver.findElements(
-      By.css('[itemprop="streetAddress"], [itemprop="postalCode"], [itemprop="addressLocality"]')
-    );
     
-    for (const el of addrElements) {
-      const text = (await el.getText()).trim();
-      if (text) addrParts.push(text);
+    try {
+      const addrElements = await driver.findElements(
+        By.css('[itemprop="streetAddress"], [itemprop="postalCode"], [itemprop="addressLocality"]')
+      );
+      
+      for (const el of addrElements) {
+        const text = (await el.getText()).trim();
+        if (text) addrParts.push(text);
+      }
+    } catch (e) {}
+
+    if (addrParts.length === 0) {
+      try {
+        const addrEl = await driver.findElement(
+          By.css('[class*="address"], [class*="adresse"], .fr-address')
+        );
+        const text = (await addrEl.getText()).trim();
+        if (text) addrParts.push(text);
+      } catch (e) {}
+    }
+
+    if (addrParts.length === 0) {
+      try {
+        const paragraphs = await driver.findElements(By.css('p, div'));
+        for (const p of paragraphs) {
+          const text = (await p.getText()).trim();
+          if (text && /\d{5}/.test(text) && text.length < 200) {
+            addrParts.push(text);
+            break;
+          }
+        }
+      } catch (e) {}
     }
     
-    data.adresse = addrParts.join(' ');
-  } catch (e) {
-    // Ignorer
-  }
+    data.adresse = addrParts.join(' ').replace(/\s+/g, ' ').trim();
+  } catch (e) {}
 
   // TÉLÉPHONE
   try {
-    const telLink = await driver.findElement(By.css('a[href^="tel:"]'));
-    data.telephone = (await telLink.getText()).trim();
-  } catch (e) {
-    // Pas de téléphone
-  }
+    try {
+      const telLink = await driver.findElement(By.css('a[href^="tel:"]'));
+      data.telephone = (await telLink.getText()).trim();
+    } catch (e) {}
+
+    if (!data.telephone) {
+      try {
+        const bodyText = await driver.findElement(By.css('body')).getText();
+        const telMatch = bodyText.match(/0[1-9](?:[\s.-]?\d{2}){4}/);
+        if (telMatch) {
+          data.telephone = telMatch[0].trim();
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
 
   // EMAIL
   try {
@@ -225,22 +361,29 @@ async function scrapeDetailPage(driver: WebDriver, url: string): Promise<Scraper
         data.email = email;
       }
     }
-  } catch (e) {
-    // Pas d'email
-  }
+  } catch (e) {}
 
   // SITE WEB
   try {
     const siteLink = await driver.findElement(By.css('a[itemprop="url"]'));
     data.site = (await siteLink.getAttribute('href')).trim();
   } catch (e) {
-    // Pas de site
+    try {
+      const links = await driver.findElements(By.css('a[href^="http"]'));
+      for (const link of links) {
+        const href = await link.getAttribute('href');
+        if (href && !href.includes('service-public.gouv.fr') && !href.includes('legifrance')) {
+          data.site = href;
+          break;
+        }
+      }
+    } catch (e) {}
   }
 
   // GPS
   try {
     const mapLink = await driver.findElement(
-      By.css('a[data-test="link-voir-sur-une-carte"]')
+      By.css('a[data-test="link-voir-sur-une-carte"], a[href*="openstreetmap"], a[href*="google.com/maps"]')
     );
     const href = await mapLink.getAttribute('href');
     
@@ -249,9 +392,7 @@ async function scrapeDetailPage(driver: WebDriver, url: string): Promise<Scraper
     
     if (latMatch) data.latitude = latMatch[1];
     if (lonMatch) data.longitude = lonMatch[1];
-  } catch (e) {
-    // Pas de GPS
-  }
+  } catch (e) {}
 
   // RÉGION
   try {
@@ -262,8 +403,23 @@ async function scrapeDetailPage(driver: WebDriver, url: string): Promise<Scraper
     if (breadcrumbs.length >= 3) {
       data.region = (await breadcrumbs[2].getText()).trim();
     }
-  } catch (e) {
-    // Pas de région
+  } catch (e) {}
+
+  // VÉRIFICATION FINALE
+  if (!data.nom || data.nom.trim().length === 0) {
+    const urlParts = url.split('/');
+    const lastPart = urlParts[urlParts.length - 1];
+    data.nom = `Organisme-${lastPart.substring(0, 8)}`;
+    console.log(`   ⚠️ Nom vide - fallback final: ${data.nom}`);
+  }
+
+  // DÉTECTER PAGE BLOQUÉE
+  if (data.nom.includes('renforce temporairement') || 
+      data.nom.includes('dispositif d\'accès')) {
+    console.log(`   ❌ PAGE BLOQUÉE DÉTECTÉE`);
+    const urlParts = url.split('/');
+    const lastPart = urlParts[urlParts.length - 1];
+    data.nom = `BLOQUÉ-${lastPart.substring(0, 8)}`;
   }
 
   return data;
@@ -290,7 +446,6 @@ export async function scrape(
     
     await driver.get(searchUrl);
     
-    // Attendre les résultats
     try {
       await driver.wait(
         until.elementsLocated(By.css('a.fr-link[data-test="searchResult-link"]')),
@@ -301,7 +456,6 @@ export async function scrape(
       return [];
     }
 
-    // Récupérer TOUS les liens
     const allUrls = await getAllOrganismUrls(driver);
 
     if (allUrls.length === 0) {
@@ -309,7 +463,6 @@ export async function scrape(
       return [];
     }
 
-    // Scraper chaque URL
     console.log('╔════════════════════════════════════════╗');
     console.log('║   📥 SCRAPING DES DÉTAILS             ║');
     console.log('╚════════════════════════════════════════╝\n');
@@ -320,14 +473,38 @@ export async function scrape(
       
       console.log(`${progress} (${percentage}%) ${allUrls[i]}`);
       
-      try {
-        const row = await scrapeDetailPage(driver, allUrls[i]);
-        allRows.push(row);
-      } catch (e) {
-        console.error(`   ❌ Erreur: ${(e as Error).message}`);
-        allRows.push({
+      let attempts = 0;
+      let row: ScraperRow | null = null;
+      
+      while (attempts < 2 && !row) {
+        try {
+          const tempRow = await scrapeDetailPage(driver, allUrls[i]);
+          
+          if (tempRow.nom.includes('BLOQUÉ-') || 
+              tempRow.nom.includes('renforce temporairement')) {
+            console.log(`   ⚠️ Page bloquée, attente de 60 secondes...`); // AUGMENTÉ: 10s → 60s
+            await driver.sleep(60000);
+            attempts++;
+            if (attempts < 2) {
+              console.log(`   🔄 Nouvelle tentative ${attempts + 1}/2...`);
+              continue;
+            }
+          }
+          
+          row = tempRow;
+          
+        } catch (e) {
+          console.error(`   ❌ Erreur: ${(e as Error).message}`);
+          attempts = 99;
+        }
+      }
+      
+      if (!row) {
+        const urlParts = allUrls[i].split('/');
+        const lastPart = urlParts[urlParts.length - 1];
+        row = {
           url: allUrls[i],
-          nom: 'Erreur de scraping',
+          nom: `Erreur-${lastPart?.substring(0, 8) || 'inconnu'}`,
           adresse: '',
           telephone: '',
           email: '',
@@ -335,13 +512,28 @@ export async function scrape(
           region: '',
           latitude: '',
           longitude: ''
-        });
+        };
+        console.log(`   ⚠️ Ligne d'erreur ajoutée`);
       }
+      
+      if (!row.nom || row.nom.trim().length === 0) {
+        const urlParts = allUrls[i].split('/');
+        const lastPart = urlParts[urlParts.length - 1];
+        row.nom = `Organisme-${lastPart.substring(0, 8)}`;
+        console.log(`   ⚠️ Nom vide corrigé: ${row.nom}`);
+      }
+      
+      allRows.push(row);
+      console.log(`   ✅ Ajouté: ${row.nom}`);
 
-      // Pause tous les 20 pour éviter la surcharge
-      if ((i + 1) % 20 === 0) {
+      // PAUSE LONGUE tous les 10 résultats (NOUVEAU)
+      if ((i + 1) % 10 === 0 && i + 1 < allUrls.length) {
+        console.log(`   ⏸️  PAUSE LONGUE (${i + 1}/${allUrls.length} traités)`);
+        console.log(`   ⏳ Attente de 45 secondes...\n`);
+        await driver.sleep(45000);
+      } else if ((i + 1) % 20 === 0) {
         console.log(`   ⏸️  Pause (${i + 1}/${allUrls.length} traités)\n`);
-        await driver.sleep(2000);
+        await driver.sleep(5000);
       }
     }
 

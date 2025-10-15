@@ -118,21 +118,28 @@ export class AppComponent {
   }
 
   async onExportCsv() {
-    if (!this.what.trim()) return;
-    
     const rows = this.currentRows;
-    if (rows.length === 0) return;
+    if (rows.length === 0) {
+      alert('Aucun résultat à exporter');
+      return;
+    }
 
     try {
-      this.loadingServicePublic = true;
-      this.loadingStep = '📄 Génération du fichier CSV...';
+      // Générer le CSV côté client à partir des données déjà récupérées
+      const cols = ['source', 'nom', 'adresse', 'telephone', 'ville', 'type', 'region', 'statut'];
+      const escapeCSV = (val: any) => {
+        const str = String(val ?? '').replace(/\r?\n/g, ' ').trim();
+        if (str.includes(',') || str.includes('"')) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      };
       
-      const blob = await this.api.downloadCsv(
-        this.what.trim(),
-        this.where.trim(),
-        Number(this.maxPages)
-      );
+      const header = cols.join(',');
+      const body = rows.map(r => cols.map(c => escapeCSV((r as any)[c])).join(',')).join('\n');
+      const csv = '\ufeff' + header + '\n' + body;
       
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -142,20 +149,20 @@ export class AppComponent {
       a.download = fileName;
       a.click();
       URL.revokeObjectURL(url);
+      
+      console.log(`✅ CSV exporté: ${rows.length} lignes`);
     } catch (e) {
       alert('Export CSV échoué.');
       console.error(e);
-    } finally {
-      this.loadingServicePublic = false;
-      this.loadingStep = '';
     }
   }
 
   async onExportXlsx() {
-    if (!this.what.trim()) return;
-    
     const rows = this.currentRows;
-    if (rows.length === 0) return;
+    if (rows.length === 0) {
+      alert('Aucun résultat à exporter');
+      return;
+    }
 
     try {
       this.loadingServicePublic = true;

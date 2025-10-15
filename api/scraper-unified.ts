@@ -65,6 +65,9 @@ function detectType(nom: string): string {
 }
 
 function makeKey(row: UnifiedRow): string {
+  if (row.url) {
+    return row.url;
+  }
   const nomNorm = row.nom.toLowerCase().trim().replace(/\s+/g, ' ');
   const addrNorm = row.adresse.toLowerCase().trim().replace(/\s+/g, ' ');
   return `${nomNorm}|${addrNorm}`;
@@ -92,7 +95,7 @@ export async function scrapeUnified(
   maxPages = 5
 ): Promise<UnifiedRow[]> {
   console.log('\n╔═══════════════════════════════════════╗');
-  console.log('║   🔍 SCRAPING UNIFIÉ (TEST MODE)     ║');
+  console.log('║   🔍 SCRAPING UNIFIÉ (2 SOURCES)     ║');
   console.log('╚═══════════════════════════════════════╝');
   console.log(`   Recherche: "${searchTerm}"`);
   console.log(`   Localisation: "${location || 'France entière'}"`);
@@ -101,10 +104,10 @@ export async function scrapeUnified(
   const resultsMap = new Map<string, UnifiedRow>();
 
   try {
-    // ========================================
-    // 1. SCRAPER SERVICE-PUBLIC (ACTIF)
-    // ========================================
-    console.log('📍 [1/2] Scraping Service-Public.fr...');
+    // =============================================
+    // 1. SERVICE-PUBLIC.FR
+    // =============================================
+    console.log('📍 [1/2] Scraping Service-Public.fr...\n');
     const servicePublicData = await scrapeServicePublic(searchTerm, location, maxPages);
     const servicePublicUnified = convertServicePublic(servicePublicData);
     
@@ -115,27 +118,25 @@ export async function scrapeUnified(
       resultsMap.set(key, row);
     }
 
-    // ========================================
-    // 2. MASÉCURITÉ - DÉSACTIVÉ POUR LES TESTS
-    // ========================================
-    console.log('📍 [2/2] MaSécurité.interieur.gouv.fr...');
-    console.log('   ⚠️  DÉSACTIVÉ POUR LES TESTS');
-    console.log('   ✅ MaSécurité: 0 résultats (test mode)\n');
-
-    // CODE DÉSACTIVÉ :
-    // const maSecuriteData = await scrapeMaSecurite(searchTerm, location);
-    // const maSecuriteUnified = convertMaSecurite(maSecuriteData);
+    // =============================================
+    // 2. MASÉCURITÉ.INTERIEUR.GOV.FR (ACTIVÉ)
+    // =============================================
+    console.log('📍 [2/2] MaSécurité.interieur.gouv.fr...\n');
     
-    const maSecuriteUnified: UnifiedRow[] = []; // Vide pour les tests
+    // CHANGEMENT ICI : ACTIVÉ au lieu de désactivé
+    const maSecuriteData = await scrapeMaSecurite(searchTerm, location);
+    const maSecuriteUnified = convertMaSecurite(maSecuriteData);
     
-    // Fusion (actuellement rien à fusionner)
+    console.log(`   ✅ MaSécurité: ${maSecuriteUnified.length} résultats\n`);
+    
     let duplicatesCount = 0;
     for (const row of maSecuriteUnified) {
       const key = makeKey(row);
       
       if (resultsMap.has(key)) {
         const existing = resultsMap.get(key)!;
-        resultsMap.set(key, mergeRows(existing, row));
+        const merged = mergeRows(existing, row);
+        resultsMap.set(key, merged);
         duplicatesCount++;
       } else {
         resultsMap.set(key, row);
@@ -144,20 +145,29 @@ export async function scrapeUnified(
 
     const finalResults = Array.from(resultsMap.values());
 
+    // Filtrer les pages bloquées
+    const cleanResults = finalResults.filter(row => 
+      !row.nom.includes('BLOQUÉ-') && 
+      !row.nom.includes('renforce temporairement') &&
+      !row.nom.includes('Erreur-')
+    );
+
     const totalFromBoth = servicePublicUnified.length + maSecuriteUnified.length;
+    const blockedCount = finalResults.length - cleanResults.length;
     
     console.log('╔═══════════════════════════════════════╗');
-    console.log('║          📊 STATISTIQUES (TEST)       ║');
+    console.log('║          📊 STATISTIQUES FINALES      ║');
     console.log('╚═══════════════════════════════════════╝');
     console.log(`   Service-Public:    ${servicePublicUnified.length} résultats`);
-    console.log(`   MaSécurité:        ${maSecuriteUnified.length} résultats (désactivé)`);
+    console.log(`   MaSécurité:        ${maSecuriteUnified.length} résultats`);
     console.log(`   ─────────────────────────────────────`);
     console.log(`   Total brut:        ${totalFromBoth} résultats`);
     console.log(`   Doublons détectés: ${duplicatesCount} résultats`);
+    console.log(`   Pages bloquées:    ${blockedCount} résultats`);
     console.log(`   ═════════════════════════════════════`);
-    console.log(`   ✅ RÉSULTATS UNIQUES: ${finalResults.length}\n`);
+    console.log(`   ✅ RÉSULTATS UNIQUES: ${cleanResults.length}\n`);
 
-    return finalResults;
+    return cleanResults;
 
   } catch (error) {
     console.error('❌ Erreur lors du scraping unifié:', error);
