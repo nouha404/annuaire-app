@@ -1,0 +1,261 @@
+import { Builder, Browser, By, until, WebDriver } from 'selenium-webdriver';
+import { Options as ChromeOptions } from 'selenium-webdriver/chrome';
+
+const BASE = 'https://www.masecurite.interieur.gouv.fr/fr/trouver-un-commissariat-une-gendarmerie';
+
+export interface MaSecuriteRow {
+  nom: string;
+  adresse: string;
+  telephone: string;
+  statut: string;
+  type: string;
+  ville: string;
+}
+
+async function createDriver(): Promise<WebDriver> {
+  const options = new ChromeOptions();
+  options.addArguments(
+    '--headless=new',
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--window-size=1920,1080',
+    '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+  );
+
+  const chromeBin = process.env['CHROME_BIN'];
+  if (chromeBin) {
+    options.setChromeBinaryPath(chromeBin);
+  }
+
+  return await new Builder()
+    .forBrowser(Browser.CHROME)
+    .setChromeOptions(options)
+    .build();
+}
+
+/**
+ * Extrait les résultats de la liste affichée
+ */
+async function extractResults(driver: WebDriver): Promise<MaSecuriteRow[]> {
+  const results: MaSecuriteRow[] = [];
+
+  try {
+    // Attendre que les résultats se chargent
+    await driver.wait(
+      until.elementLocated(By.css('ul#results-point-list li.force-point-list-item')),
+      10000
+    );
+
+    // Petite pause pour s'assurer que tout est chargé
+    await driver.sleep(2000);
+
+    // Récupérer tous les items de la liste
+    const items = await driver.findElements(By.css('ul#results-point-list li.force-point-list-item'));
+    
+    console.log(`      → ${items.length} établissement(s) trouvé(s)`);
+
+    for (const item of items) {
+      try {
+        const data: MaSecuriteRow = {
+          nom: '',
+          adresse: '',
+          telephone: '',
+          statut: '',
+          type: '',
+          ville: ''
+        };
+
+        // NOM
+        try {
+          const nomElement = await item.findElement(By.css('h2.point-label'));
+          data.nom = (await nomElement.getText()).trim();
+          
+          // Détecter le type depuis le nom
+          const nomLower = data.nom.toLowerCase();
+          if (nomLower.includes('commissariat')) {
+            data.type = 'Commissariat';
+          } else if (nomLower.includes('gendarmerie')) {
+            data.type = 'Gendarmerie';
+          } else if (nomLower.includes('brigade')) {
+            data.type = 'Brigade';
+          } else if (nomLower.includes('poste')) {
+            data.type = 'Poste de police';
+          } else {
+            data.type = 'Service de sécurité';
+          }
+        } catch (e) {
+          console.log('      ⚠️ Nom non trouvé');
+        }
+
+        // ADRESSE
+        try {
+          const addrElement = await item.findElement(By.css('a.point-address'));
+          const fullAddress = (await addrElement.getText()).trim();
+          data.adresse = fullAddress;
+          
+          // Extraire la ville (dernier mot après le code postal)
+          const match = fullAddress.match(/\d{5}\s+(.+?)$/);
+          if (match) {
+            data.ville = match[1].trim();
+          }
+        } catch (e) {
+          console.log('      ⚠️ Adresse non trouvée');
+        }
+
+        // TÉLÉPHONE
+        try {
+          const phoneElement = await item.findElement(By.css('.point-phone a'));
+          data.telephone = (await phoneElement.getText()).trim().replace(/\s/g, '');
+        } catch (e) {
+          // Pas de téléphone, c'est OK
+        }
+
+        // STATUT (Ouvert/Fermé)
+        try {
+          const statutElement = await item.findElement(By.css('.opening-time-badge'));
+          data.statut = (await statutElement.getText()).trim();
+        } catch (e) {
+          // Pas de statut affiché
+        }
+
+        // Ajouter seulement si on a au moins le nom
+        if (data.nom && data.nom.length > 3) {
+          results.push(data);
+        }
+
+      } catch (e) {
+        console.log('      ⚠️ Erreur sur un item:', (e as Error).message);
+      }
+    }
+
+  } catch (e) {
+    console.error('      ❌ Erreur extraction:', (e as Error).message);
+  }
+
+  return results;
+}
+
+export async function scrapeMaSecurite(
+  searchTerm: string,
+  location = ''
+): Promise<MaSecuriteRow[]> {
+  console.log(`\n╔════════════════════════════════════════╗`);
+  console.log(`║   🔍 MASÉCURITÉ.GOUV.FR               ║`);
+  console.log(`╚════════════════════════════════════════╝`);
+  console.log(`   Recherche: "${searchTerm}"`);
+  console.log(`   Localisation: "${location || 'France'}"\n`);
+
+  let driver: WebDriver | null = null;
+  const allResults: MaSecuriteRow[] = [];
+
+  try {
+    driver = await createDriver();
+
+    console.log('   🌐 Accès au site...');
+    await driver.get(BASE);
+    await driver.sleep(3000);
+
+    // Trouver le champ de recherche
+    let searchInput;
+    try {
+      searchInput = await driver.findElement(
+        By.css('input[type="search"], input#inputCiat')
+      );
+      console.log('   ✅ Champ de recherche trouvé');
+    } catch (e) {
+      console.log('   ❌ Champ de recherche introuvable');
+      return [];
+    }
+
+    // Déterminer quoi taper dans la recherche
+    const query = location || searchTerm;
+    console.log(`   ⌨️  Saisie: "${query}"`);
+    
+    await searchInput.clear();
+    await searchInput.sendKeys(query);
+    await driver.sleep(3000);
+
+    // Attendre les suggestions
+    console.log('   ⏳ Attente des suggestions...');
+    let suggestions;
+    try {
+      await driver.wait(
+        until.elementsLocated(By.css('ul#map-point-autocomplete-list li[data-autocomplete-value]')),
+        10000
+      );
+      
+      suggestions = await driver.findElements(
+        By.css('ul#map-point-autocomplete-list li[data-autocomplete-value]')
+      );
+    } catch (e) {
+      console.log('   ⚠️ Aucune suggestion trouvée, tentative de recherche directe...');
+      
+      // Essayer de cliquer sur le bouton rechercher
+      try {
+        const searchButton = await driver.findElement(By.css('button#searchCommune, button.search-submit'));
+        await searchButton.click();
+        await driver.sleep(4000);
+        
+        // Extraire directement les résultats si présents
+        const directResults = await extractResults(driver);
+        if (directResults.length > 0) {
+          console.log(`\n╔════════════════════════════════════════╗`);
+          console.log(`║   ✅ MASÉCURITÉ TERMINÉ               ║`);
+          console.log(`╚════════════════════════════════════════╝`);
+          console.log(`   Total: ${directResults.length} établissements\n`);
+          return directResults;
+        }
+      } catch (e2) {
+        console.log('   ❌ Recherche directe échouée');
+      }
+      
+      return [];
+    }
+
+    console.log(`   → ${suggestions.length} suggestion(s) trouvée(s)\n`);
+
+    if (suggestions.length === 0) {
+      return [];
+    }
+
+    // Cliquer sur la première suggestion
+    try {
+      const firstSuggestion = suggestions[0];
+      const suggestionText = (await firstSuggestion.getText()).trim().substring(0, 50);
+      console.log(`   [1/${suggestions.length}] Clic sur: ${suggestionText}...`);
+
+      // Scroll et clic
+      await driver.executeScript('arguments[0].scrollIntoView(true);', firstSuggestion);
+      await driver.sleep(500);
+      await driver.executeScript('arguments[0].click();', firstSuggestion);
+      
+      console.log('   ⏳ Attente du chargement des résultats...');
+      await driver.sleep(4000);
+
+      // Extraire les résultats de la liste
+      const pageResults = await extractResults(driver);
+      console.log(`   ✅ ${pageResults.length} trouvé(s)`);
+
+      allResults.push(...pageResults);
+
+    } catch (e) {
+      console.error(`   ❌ Erreur lors du clic:`, (e as Error).message);
+    }
+
+    console.log(`\n╔════════════════════════════════════════╗`);
+    console.log(`║   ✅ MASÉCURITÉ TERMINÉ               ║`);
+    console.log(`╚════════════════════════════════════════╝`);
+    console.log(`   Total: ${allResults.length} établissements\n`);
+
+    return allResults;
+
+  } catch (error) {
+    console.error('❌ Erreur MaSécurité:', (error as Error).message);
+    return [];
+  } finally {
+    if (driver) {
+      await driver.quit();
+    }
+  }
+}

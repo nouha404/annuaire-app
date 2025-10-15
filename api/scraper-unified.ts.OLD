@@ -19,7 +19,7 @@ export interface UnifiedRow {
 
 function convertServicePublic(rows: ScraperRow[]): UnifiedRow[] {
   return rows.map(r => ({
-    source: 'Service-Public',
+    source: 'Service-Public (API)',
     nom: r.nom,
     adresse: r.adresse,
     telephone: r.telephone,
@@ -36,7 +36,7 @@ function convertServicePublic(rows: ScraperRow[]): UnifiedRow[] {
 
 function convertMaSecurite(rows: MaSecuriteRow[]): UnifiedRow[] {
   return rows.map(r => ({
-    source: 'MaSécurité',
+    source: 'MaSécurité (Scraping)',
     nom: r.nom,
     adresse: r.adresse,
     telephone: r.telephone,
@@ -107,16 +107,16 @@ export async function scrapeUnified(
   console.log('╚═══════════════════════════════════════╝');
   console.log(`   Recherche: "${searchTerm}"`);
   console.log(`   Localisation: "${location || 'France entière'}"`);
-  console.log(`   Pages max: ${maxPages}\n`);
+  console.log(`   Mode: API + Scraping\n`);
 
   const resultsMap = new Map<string, UnifiedRow>();
   const startTime = Date.now();
 
   try {
     // =============================================
-    // 1. SERVICE-PUBLIC.FR (Scraping Selenium)
+    // 1. API SERVICE-PUBLIC.FR
     // =============================================
-    console.log('📍 [1/2] Scraping Service-Public.fr...\n');
+    console.log('📍 [1/2] API Service-Public.fr...\n');
     const servicePublicData = await scrapeServicePublic(searchTerm, location, maxPages);
     const servicePublicUnified = convertServicePublic(servicePublicData);
     
@@ -128,7 +128,7 @@ export async function scrapeUnified(
     }
 
     // =============================================
-    // 2. MASÉCURITÉ.INTERIEUR.GOV.FR (Scraping Simple)
+    // 2. MASÉCURITÉ.INTERIEUR.GOV.FR
     // =============================================
     console.log('📍 [2/2] MaSécurité.interieur.gouv.fr...\n');
     
@@ -154,7 +154,7 @@ export async function scrapeUnified(
     const finalResults = Array.from(resultsMap.values());
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-    // Filtrer les erreurs
+    // Filtrer les pages bloquées
     const cleanResults = finalResults.filter(row => 
       !row.nom.includes('BLOQUÉ-') && 
       !row.nom.includes('renforce temporairement') &&

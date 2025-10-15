@@ -1,3 +1,5 @@
+
+
 import { Builder, Browser, By, until, WebDriver } from 'selenium-webdriver';
 import { Options as ChromeOptions } from 'selenium-webdriver/chrome';
 
@@ -34,30 +36,51 @@ async function createDriver(): Promise<WebDriver> {
     .build();
 }
 
-// Scraper les résultats après avoir cliqué sur une suggestion
-async function scrapeResults(driver: WebDriver): Promise<MaSecuriteRow[]> {
+/**
+ * Extrait les résultats de la liste affichée
+ */
+async function extractResults(driver: WebDriver): Promise<MaSecuriteRow[]> {
   const results: MaSecuriteRow[] = [];
 
   try {
-    // Attendre que les résultats se chargent
-    await driver.sleep(4000);
+    // D'abord vérifier si on est bien sur une page avec des résultats
+    const currentUrl = await driver.getCurrentUrl();
+    console.log(`      📍 URL actuelle: ${currentUrl.substring(0, 80)}...`);
 
-    // Trouver tous les établissements (plusieurs sélecteurs possibles)
-    let items = await driver.findElements(
-      By.css('ul.force-point-list li.force-point-list-item, li.force-point-list-item')
+    // Attendre que les résultats se chargent
+    console.log('      ⏳ Attente de la liste de résultats...');
+    await driver.wait(
+      until.elementLocated(By.css('ul#results-point-list')),
+      10000
     );
 
-    if (items.length === 0) {
-      items = await driver.findElements(By.css('li.list-group-item.fr-py-2v'));
+    await driver.sleep(2000);
+
+    // Vérifier si on a le message "aucun résultat"
+    const noResults = await driver.findElements(By.css('#no-results-point-list:not(.fr-hidden)'));
+    if (noResults.length > 0) {
+      console.log('      ℹ️  Message "Aucun résultat" affiché');
+      return [];
     }
 
+    // Récupérer tous les items de la liste
+    const items = await driver.findElements(By.css('ul#results-point-list li.force-point-list-item'));
+    
     if (items.length === 0) {
-      items = await driver.findElements(By.css('article, [role="article"]'));
+      console.log('      ⚠️  Liste trouvée mais aucun item dedans');
+      // Debug : récupérer le HTML de la liste
+      const listHtml = await driver.executeScript(`
+        const list = document.querySelector('ul#results-point-list');
+        return list ? list.innerHTML.substring(0, 300) : 'Liste introuvable';
+      `);
+      console.log('      🔍 HTML:', listHtml);
+      return [];
     }
+    
+    console.log(`      → ${items.length} établissement(s) dans la liste`);
 
-    console.log(`      → ${items.length} établissement(s) trouvé(s)`);
-
-    for (const item of items) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
       try {
         const data: MaSecuriteRow = {
           nom: '',
@@ -68,85 +91,77 @@ async function scrapeResults(driver: WebDriver): Promise<MaSecuriteRow[]> {
           ville: ''
         };
 
-        // NOM - chercher h2 ou h3
+        // NOM
         try {
-          let titleElement = await item.findElements(By.css('h2'));
-          if (titleElement.length === 0) {
-            titleElement = await item.findElements(By.css('h3'));
-          }
-          if (titleElement.length === 0) {
-            titleElement = await item.findElements(By.css('.point-label, .fr-text--md'));
-          }
-
-          if (titleElement.length > 0) {
-            data.nom = (await titleElement[0].getText()).trim();
-
-            const nomLower = data.nom.toLowerCase();
-            if (nomLower.includes('commissariat')) {
-              data.type = 'Commissariat';
-            } else if (nomLower.includes('gendarmerie')) {
-              data.type = 'Gendarmerie';
-            } else if (nomLower.includes('brigade')) {
-              data.type = 'Brigade';
-            } else if (nomLower.includes('poste')) {
-              data.type = 'Poste de police';
-            } else {
-              data.type = 'Service de sécurité';
-            }
-          }
-        } catch (e) {}
-
-        // ADRESSE - chercher dans tous les divs
-        try {
-          const allText = await item.getText();
-          const lines = allText.split('\n');
+          const nomElement = await item.findElement(By.css('h2.point-label'));
+          data.nom = (await nomElement.getText()).trim();
           
-          for (const line of lines) {
-            if (line && /\d{5}/.test(line) && !line.toLowerCase().includes('tél') && line.length < 200) {
-              data.adresse = line.trim();
-              
-              // Extraire ville
-              const match = line.match(/\d{5}\s+(.+?)$/);
-              if (match) {
-                data.ville = match[1].trim();
-              }
-              break;
-            }
+          // Détecter le type depuis le nom
+          const nomLower = data.nom.toLowerCase();
+          if (nomLower.includes('commissariat')) {
+            data.type = 'Commissariat';
+          } else if (nomLower.includes('gendarmerie')) {
+            data.type = 'Gendarmerie';
+          } else if (nomLower.includes('brigade')) {
+            data.type = 'Brigade';
+          } else if (nomLower.includes('poste')) {
+            data.type = 'Poste de police';
+          } else {
+            data.type = 'Service de sécurité';
+          }
+        } catch (e) {
+          console.log(`      ⚠️  Item ${i+1}: Impossible de lire le nom`);
+        }
+
+        // ADRESSE
+        try {
+          const addrElement = await item.findElement(By.css('a.point-address'));
+          const fullAddress = (await addrElement.getText()).trim();
+          data.adresse = fullAddress;
+          
+          // Extraire la ville (après le code postal)
+          const match = fullAddress.match(/(\d{5})\s+(.+?)$/);
+          if (match) {
+            data.ville = match[2].trim();
           }
         } catch (e) {}
 
         // TÉLÉPHONE
         try {
-          const telLinks = await item.findElements(By.css('a[href^="tel:"]'));
-          if (telLinks.length > 0) {
-            data.telephone = (await telLinks[0].getText()).trim().replace(/\s/g, '');
-          }
+          const phoneElement = await item.findElement(By.css('.point-phone a'));
+          data.telephone = (await phoneElement.getText()).trim().replace(/\s/g, '');
         } catch (e) {}
 
-        // STATUT
+        // STATUT (Ouvert/Fermé)
         try {
-          const badges = await item.findElements(By.css('.opening-time-badge-wrapper, [class*="badge"]'));
-          if (badges.length > 0) {
-            const badgeText = (await badges[0].getText()).trim();
-            if (badgeText) {
-              data.statut = badgeText;
-            }
-          }
+          const statutElement = await item.findElement(By.css('.opening-time-badge'));
+          data.statut = (await statutElement.getText()).trim();
         } catch (e) {}
 
+        // Ajouter si on a au moins le nom
         if (data.nom && data.nom.length > 3) {
           results.push(data);
+          console.log(`      ✅ [${i+1}/${items.length}] ${data.nom.substring(0, 50)}`);
+        } else {
+          console.log(`      ⚠️  [${i+1}/${items.length}] Item ignoré (nom invalide)`);
         }
 
       } catch (e) {
-        // Ignorer
+        console.log(`      ❌ [${i+1}/${items.length}] Erreur:`, (e as Error).message);
       }
     }
 
   } catch (e) {
-    console.error('      ❌ Erreur scraping:', (e as Error).message);
+    console.error('      ❌ Erreur extraction:', (e as Error).message);
+    
+    // Essayer de capturer une capture d'écran pour debug
+    try {
+      const screenshot = await driver.takeScreenshot();
+      console.log('      📸 Screenshot capturé (base64, premiers 100 chars):', screenshot.substring(0, 100));
+    } catch (screenshotError) {}
   }
 
+  console.log(`      📊 Total extrait: ${results.length} établissements valides`);
   return results;
 }
 
@@ -166,121 +181,229 @@ export async function scrapeMaSecurite(
   try {
     driver = await createDriver();
 
-    console.log('   🔍 Accès au site...');
+    console.log('   🌐 Accès au site...');
     await driver.get(BASE);
-    await driver.sleep(3000);
+    await driver.sleep(4000);
+
+    // ===== FERMETURE COMPLÈTE DU MODAL DE COOKIES =====
+    console.log('   🍪 Gestion des cookies...');
+    try {
+      // Stratégie 1 : Accepter/refuser tous les cookies via les boutons
+      const acceptAllBtn = await driver.findElements(
+        By.css('#tarteaucitronPersonalize2, #tarteaucitronAllAllowed, #tarteaucitronAllDenied2')
+      );
+      if (acceptAllBtn.length > 0) {
+        for (const btn of acceptAllBtn) {
+          try {
+            if (await btn.isDisplayed()) {
+              console.log('      → Clic sur bouton cookies');
+              await driver.executeScript('arguments[0].click();', btn);
+              await driver.sleep(1500);
+              break;
+            }
+          } catch (e) {}
+        }
+      }
+
+      // Stratégie 2 : Fermer l'alerte/bannière
+      const closeAlert = await driver.findElements(
+        By.css('#tarteaucitronCloseAlert, button[aria-controls="tarteaucitronAlertBig"]')
+      );
+      if (closeAlert.length > 0) {
+        for (const btn of closeAlert) {
+          try {
+            if (await btn.isDisplayed()) {
+              console.log('      → Fermeture de la bannière');
+              await driver.executeScript('arguments[0].click();', btn);
+              await driver.sleep(1000);
+              break;
+            }
+          } catch (e) {}
+        }
+      }
+
+      // Stratégie 3 : SUPPRESSION RADICALE de tous les overlays
+      await driver.executeScript(`
+        // Supprimer tous les éléments qui peuvent bloquer
+        const selectorsToRemove = [
+          '#tarteaucitronRoot',
+          '#tarteaucitronAlertBig',
+          '#tarteaucitronBack',
+          '.tarteaucitronAlertBigBottom',
+          '#tarteaucitron',
+          '[id*="tarteaucitron"]'
+        ];
+        
+        selectorsToRemove.forEach(selector => {
+          const elements = document.querySelectorAll(selector);
+          elements.forEach(el => {
+            if (el && el.parentNode) {
+              el.parentNode.removeChild(el);
+            }
+          });
+        });
+        
+        // Remettre le body en état normal
+        document.body.style.overflow = 'auto';
+        document.body.style.position = 'static';
+        
+        console.log('Overlays cookies supprimés');
+      `);
+      
+      console.log('   ✅ Cookies gérés (overlays supprimés)');
+      await driver.sleep(1000);
+      
+    } catch (e) {
+      console.log('   ⚠️  Problème cookies:', (e as Error).message);
+    }
 
     // Trouver le champ de recherche
     let searchInput;
     try {
-      searchInput = await driver.findElement(
-        By.css('input[type="search"], input[type="text"], input[placeholder*="adresse"]')
-      );
+      // Attendre que le champ soit interactif
+      await driver.wait(until.elementLocated(By.css('input#inputCiat')), 10000);
+      searchInput = await driver.findElement(By.css('input#inputCiat'));
+      
+      // S'assurer qu'il est visible
+      const isDisplayed = await searchInput.isDisplayed();
+      const isEnabled = await searchInput.isEnabled();
+      console.log(`   ✅ Champ trouvé (visible: ${isDisplayed}, enabled: ${isEnabled})`);
+      
+      if (!isDisplayed || !isEnabled) {
+        throw new Error('Champ de recherche non interactif');
+      }
     } catch (e) {
-      console.log('   ❌ Champ de recherche introuvable');
+      console.log('   ❌ Champ de recherche introuvable ou non interactif');
+      console.log('   💡 Le site a peut-être changé de structure');
       return [];
     }
 
-    // Taper la recherche
-    const query = location || searchTerm;
+    // Déterminer la requête
+    let query = location || searchTerm;
+    
+    const isOrgType = /commissariat|gendarmerie|police|mairie|préfecture/i.test(searchTerm);
+    if (isOrgType && !location) {
+      console.log('   ⚠️ MaSécurité nécessite une localisation (ville/code postal)');
+      console.log('   💡 Ajoutez un paramètre "where" pour obtenir des résultats\n');
+      return [];
+    }
+    
     console.log(`   ⌨️  Saisie: "${query}"`);
+    
+    // Scroller vers le champ et l'activer via JavaScript (évite les interceptions)
+    try {
+      await driver.executeScript(`
+        const input = arguments[0];
+        input.scrollIntoView({block: 'center', behavior: 'smooth'});
+      `, searchInput);
+      await driver.sleep(500);
+      
+      // Focus et clic via JavaScript (plus fiable que click() natif)
+      await driver.executeScript(`
+        const input = arguments[0];
+        input.focus();
+        input.click();
+      `, searchInput);
+      await driver.sleep(500);
+      
+      console.log('   ✅ Champ activé');
+    } catch (e) {
+      console.log('   ⚠️  Erreur activation:', (e as Error).message);
+    }
+    
+    // Vider et taper caractère par caractère (plus naturel pour déclencher l'autocomplete)
     await searchInput.clear();
-    await searchInput.sendKeys(query);
-    await driver.sleep(3000);
-
-    // Attendre les suggestions
-    console.log('   ⏳ Attente des suggestions...');
+    await driver.sleep(300);
+    
+    for (const char of query) {
+      await searchInput.sendKeys(char);
+      await driver.sleep(150); // Délai entre chaque caractère
+    }
+    
+    console.log('   ⏳ Attente des suggestions (15s max)...');
+    
+    // Attendre que la liste devienne visible
     let suggestions;
     try {
-      await driver.wait(
-        until.elementsLocated(By.css('li[data-autocomplete-value], li.list-group-item, li[role="option"]')),
-        10000
+      // D'abord attendre que l'attribut hidden soit retiré
+      await driver.wait(async () => {
+        const list = await driver.findElements(By.css('ul#map-point-autocomplete-list:not([hidden])'));
+        return list.length > 0;
+      }, 15000);
+      
+      await driver.sleep(1500);
+      
+      // Ensuite récupérer les suggestions
+      suggestions = await driver.findElements(
+        By.css('ul#map-point-autocomplete-list li.list-group-item[role="option"]')
       );
       
-      suggestions = await driver.findElements(
-        By.css('li[data-autocomplete-value], li.list-group-item, li[role="option"]')
-      );
-    } catch (e) {
-      console.log('   ⚠️ Aucune suggestion trouvée');
-      return [];
-    }
-
-    console.log(`   → ${suggestions.length} suggestion(s) trouvée(s)\n`);
-
-    if (suggestions.length === 0) {
-      return [];
-    }
-
-    // Traiter chaque suggestion
-    for (let i = 0; i < Math.min(suggestions.length, 5); i++) {
-      try {
-        // Retaper la recherche (car après chaque clic, on perd les suggestions)
-        if (i > 0) {
-          await driver.get(BASE);
-          await driver.sleep(2000);
-          
-          const newInput = await driver.findElement(
-            By.css('input[type="search"], input[type="text"]')
-          );
-          await newInput.clear();
-          await newInput.sendKeys(query);
-          await driver.sleep(2000);
-          
-          await driver.wait(
-            until.elementsLocated(By.css('li[data-autocomplete-value], li.list-group-item')),
-            5000
-          );
-        }
-
-        // Re-récupérer les suggestions
-        const currentSuggestions = await driver.findElements(
-          By.css('li[data-autocomplete-value], li.list-group-item, li[role="option"]')
-        );
-
-        if (i >= currentSuggestions.length) {
-          break;
-        }
-
-        const suggestion = currentSuggestions[i];
-        
-        // Récupérer le texte de la suggestion
-        const suggestionText = (await suggestion.getText()).trim().substring(0, 50);
-        console.log(`   [${i + 1}/${Math.min(suggestions.length, 5)}] ${suggestionText}...`);
-
-        // Cliquer sur la suggestion
-        await driver.executeScript('arguments[0].scrollIntoView(true);', suggestion);
-        await driver.sleep(500);
-        await driver.executeScript('arguments[0].click();', suggestion);
-        await driver.sleep(3000);
-
-        // Scraper les résultats
-        const pageResults = await scrapeResults(driver);
-        console.log(`      ✅ ${pageResults.length} trouvé(s)`);
-
-        // Ajouter sans doublons
-        for (const result of pageResults) {
-          const isDuplicate = allResults.some(
-            r => r.nom === result.nom && r.adresse === result.adresse
-          );
-          if (!isDuplicate) {
-            allResults.push(result);
-          }
-        }
-
-      } catch (e) {
-        console.error(`      ❌ Erreur suggestion ${i + 1}:`, (e as Error).message);
+      console.log(`   📋 ${suggestions.length} suggestion(s) trouvée(s)`);
+      
+      // Debug : afficher le HTML de la liste si vide
+      if (suggestions.length === 0) {
+        const listHtml = await driver.executeScript(`
+          const list = document.querySelector('ul#map-point-autocomplete-list');
+          return list ? list.outerHTML.substring(0, 500) : 'Liste introuvable';
+        `);
+        console.log('   🔍 HTML de la liste:', listHtml);
       }
+      
+    } catch (e) {
+      console.log('   ⚠️ Timeout : aucune suggestion trouvée');
+      console.log('   💡 La ville/code postal n\'existe peut-être pas');
+      
+      // Essayer de voir ce qu'il y a dans la page
+      const pageSource = await driver.getPageSource();
+      if (pageSource.includes('Aucun résultat') || pageSource.includes('aucune suggestion')) {
+        console.log('   💡 Confirmation : pas de résultats pour cette recherche\n');
+      }
+      return [];
+    }
+
+    if (!suggestions || suggestions.length === 0) {
+      console.log('   ⚠️ Aucune suggestion disponible\n');
+      return [];
+    }
+
+    // Cliquer sur la PREMIÈRE suggestion
+    try {
+      const firstSuggestion = suggestions[0];
+      const suggestionText = (await firstSuggestion.getText()).trim();
+      console.log(`   [1/1] Sélection : ${suggestionText.substring(0, 60)}...`);
+
+      // Rendre visible et cliquer via JavaScript
+      await driver.executeScript(`
+        const suggestion = arguments[0];
+        suggestion.scrollIntoView({block: 'center'});
+      `, firstSuggestion);
+      await driver.sleep(500);
+      
+      // Clic JavaScript (plus fiable)
+      await driver.executeScript('arguments[0].click();', firstSuggestion);
+      
+      console.log('   ⏳ Chargement des résultats...');
+      await driver.sleep(5000);
+
+      // Extraire les résultats
+      const pageResults = await extractResults(driver);
+      console.log(`   ✅ ${pageResults.length} établissement(s) récupéré(s)`);
+
+      allResults.push(...pageResults);
+
+    } catch (e) {
+      console.error(`   ❌ Erreur lors de la sélection:`, (e as Error).message);
     }
 
     console.log(`\n╔════════════════════════════════════════╗`);
-    console.log(`║   ✅ MASÉCURITÉ TERMINÉ               ║`);
+    console.log(`║   ✅ SCRAPING TERMINÉ                 ║`);
     console.log(`╚════════════════════════════════════════╝`);
     console.log(`   Total: ${allResults.length} établissements\n`);
 
     return allResults;
 
   } catch (error) {
-    console.error('❌ Erreur MaSécurité:', (error as Error).message);
+    console.error('❌ Erreur globale MaSécurité:', (error as Error).message);
     return [];
   } finally {
     if (driver) {

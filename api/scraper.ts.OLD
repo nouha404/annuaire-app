@@ -1,0 +1,129 @@
+import axios from 'axios';
+
+const API_BASE = 'https://api-lannuaire.service-public.fr/api/explore/v2.1';
+
+export interface ScraperRow {
+  nom: string;
+  adresse: string;
+  telephone: string;
+  email: string;
+  site: string;
+  region: string;
+  latitude: string;
+  longitude: string;
+  url: string;
+}
+
+/**
+ * VERSION API - Remplace le scraping Selenium par l'API officielle
+ * Garde la même interface pour compatibilité avec scraper-unified.ts
+ */
+export async function scrape(
+  what: string,
+  where = '',
+  maxPages = 999
+): Promise<ScraperRow[]> {
+  console.log('\n╔════════════════════════════════════════╗');
+  console.log('║   🔍 API SERVICE-PUBLIC.FR (OFF.)     ║');
+  console.log('╚════════════════════════════════════════╝');
+  console.log(`   Recherche: "${what}"`);
+  console.log(`   Localisation: "${where || 'France entière'}"\n`);
+
+  const allRows: ScraperRow[] = [];
+  const startTime = Date.now();
+
+  try {
+    let offset = 0;
+    const limit = 100; // Max par page API
+    let hasMore = true;
+    const maxResults = maxPages * 20; // Simule la pagination (20 résultats/page web)
+
+    while (hasMore && allRows.length < maxResults) {
+      const params: any = {
+        limit,
+        offset,
+        timezone: 'Europe/Paris'
+      };
+
+      // Construction de la clause WHERE
+      let whereClause = '';
+      
+      if (what) {
+        whereClause = `search(nom, "${what}") OR search(typologie, "${what}")`;
+      }
+      
+      if (where) {
+        if (whereClause) whereClause += ' AND ';
+        whereClause += `(search(adresse, "${where}") OR search(ville_nom, "${where}") OR search(code_postal, "${where}"))`;
+      }
+
+      if (whereClause) {
+        params.where = whereClause;
+      }
+
+      console.log(`📄 Page API ${Math.floor(offset / limit) + 1}...`);
+
+      // Appel API
+      const response = await axios.get(
+        `${API_BASE}/catalog/datasets/api-lannuaire-administration/records`,
+        { 
+          params, 
+          timeout: 30000,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; AnnuaireBot/1.0)'
+          }
+        }
+      );
+
+      const pageResults = response.data.results.map((record: any) => {
+        const fields = record.fields || record;
+        
+        return {
+          nom: fields.nom || '',
+          adresse: fields.adresse || '',
+          telephone: fields.telephone || '',
+          email: fields.email || '',
+          site: fields.url || fields.site_internet || '',
+          region: fields.region_nom || fields.departement_nom || '',
+          latitude: String(fields.latitude || fields.coordonnees?.lat || ''),
+          longitude: String(fields.longitude || fields.coordonnees?.lon || ''),
+          url: fields.url || `https://lannuaire.service-public.fr/organisme/${record.recordid || ''}`
+        };
+      });
+
+      allRows.push(...pageResults);
+
+      console.log(`   → +${pageResults.length} résultats (Total: ${allRows.length}/${response.data.total_count})`);
+
+      // Vérifier s'il reste des résultats
+      if (pageResults.length < limit || allRows.length >= response.data.total_count || allRows.length >= maxResults) {
+        hasMore = false;
+      } else {
+        offset += limit;
+        // Pause polie entre les requêtes
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+    console.log('\n╔════════════════════════════════════════╗');
+    console.log('║   ✅ API TERMINÉE                      ║');
+    console.log('╚════════════════════════════════════════╝');
+    console.log(`   Résultats: ${allRows.length} organismes`);
+    console.log(`   Durée: ${duration}s\n`);
+
+    return allRows;
+
+  } catch (error: any) {
+    console.error('\n❌ Erreur API Service-Public:', error.message);
+    
+    if (error.response) {
+      console.error(`   Status: ${error.response.status}`);
+      console.error(`   Message: ${error.response.data?.message || 'Erreur inconnue'}`);
+    }
+    
+    // Retourner tableau vide en cas d'erreur
+    return [];
+  }
+}
