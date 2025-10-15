@@ -1,36 +1,42 @@
 // server.ts
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import path from 'path';
 import * as XLSX from 'xlsx';
 import util from 'node:util';
 import { scrape as scrapeServicePublic } from './api/scraper';
 import { scrapeMaSecurite } from './api/scraper-masecurite';
 
 const app = express();
-const PORT = Number(process.env.PORT || 3000);
+const port = Number(process.env.PORT || 3000);
 
-// --- CORS whitelist (utile si front séparé) ---
+/* =========================
+ *  CORS (whitelist optionnelle)
+ * ========================= */
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
 
-app.set('trust proxy', 1); // Railway/Proxy
+app.set('trust proxy', 1);
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin || allowedOrigins.length === 0) return cb(null, true); // même origin / dev
+    if (!origin || allowedOrigins.length === 0) return cb(null, true);
     return allowedOrigins.includes(origin) ? cb(null, true) : cb(new Error('Not allowed by CORS'));
   }
 }));
 
 app.use(express.json());
 
-// Servez le build Angular si vous déployez front+api ensemble
-app.use(express.static('dist/annuaire-app/browser'));
+/* =========================
+ *  SERVE ANGULAR BUILD (si front + API ensemble)
+ * ========================= */
+const distFolder = path.join(process.cwd(), 'dist/annuaire-app/browser');
+app.use(express.static(distFolder));
 
-/* ============================================================
- * INTERFACE UNIFIÉE
- * ============================================================ */
+/* =========================
+ *  Types communs
+ * ========================= */
 interface UnifiedRow {
   source: string;
   nom: string;
@@ -47,9 +53,9 @@ interface UnifiedRow {
   url?: string;
 }
 
-/* ============================================================
- * LOGS SÉCURISÉS (pas de récursion)
- * ============================================================ */
+/* =========================
+ *  LOGS SÉCURISÉS (pas de récursion)
+ * ========================= */
 const logsStore = new Map<string, string[]>();
 
 const ORIG_CONSOLE = {
@@ -60,9 +66,10 @@ const ORIG_CONSOLE = {
 };
 
 function formatArgs(args: any[]): string {
-  return args.map(a => typeof a === 'string'
-    ? a
-    : util.inspect(a, { depth: 4, colors: false, maxArrayLength: 200, maxStringLength: 2000, compact: 3 })
+  return args.map(a =>
+    typeof a === 'string'
+      ? a
+      : util.inspect(a, { depth: 4, colors: false, maxArrayLength: 200, maxStringLength: 2000, compact: 3 })
   ).join(' ');
 }
 
@@ -90,23 +97,22 @@ function captureConsoleLogs(sessionId: string) {
   return () => { console.log = restore.log; console.info = restore.info; console.warn = restore.warn; console.error = restore.error; };
 }
 
-/* ============================================================
- * HEALTHCHECK (Railway)
- * ============================================================ */
+/* =========================
+ *  HEALTHCHECK (Railway)
+ * ========================= */
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-/* ============================================================
- * SSE LOG STREAM (temps réel + heartbeat)
- * ============================================================ */
+/* =========================
+ *  SSE LOGS (avec heartbeat)
+ * ========================= */
 app.get('/api/logs/:sessionId', (req: Request, res: Response) => {
   const { sessionId } = req.params;
 
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform'); // no-transform évite la compression proxy
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('Access-Control-Allow-Origin', '*');
-
-  res.flushHeaders?.(); // si dispo
+  res.flushHeaders?.();
 
   res.write('data: {"type":"connected"}\n\n');
 
@@ -126,7 +132,6 @@ app.get('/api/logs/:sessionId', (req: Request, res: Response) => {
     lastIndex = logs.length;
   }, 500);
 
-  // Heartbeat pour garder la connexion vivante derrière proxies
   const heartbeat = setInterval(() => res.write(':\n\n'), 15000);
 
   req.on('close', () => {
@@ -136,9 +141,9 @@ app.get('/api/logs/:sessionId', (req: Request, res: Response) => {
   });
 });
 
-/* ============================================================
- * ENDPOINT PRINCIPAL
- * ============================================================ */
+/* =========================
+ *  ENDPOINT PRINCIPAL /api/search
+ * ========================= */
 app.post('/api/search', async (req: Request, res: Response) => {
   const { what, where = '', maxPages = 3, sessionId } = req.body;
 
@@ -158,11 +163,11 @@ app.post('/api/search', async (req: Request, res: Response) => {
 
     const allRows: UnifiedRow[] = [];
 
-    // Service-Public
+    // 1) Service-Public
     emitLog(sid, '📍 [1/2] Scraping Service-Public.fr...\n');
     try {
       const spResults = await scrapeServicePublic(what, where, maxPages);
-      spResults.forEach((row) =>
+      spResults.forEach(row =>
         allRows.push({
           source: 'Service-Public',
           nom: row.nom,
@@ -183,11 +188,11 @@ app.post('/api/search', async (req: Request, res: Response) => {
       emitLog(sid, `   ❌ Erreur Service-Public: ${e.message}\n`);
     }
 
-    // MaSécurité
+    // 2) MaSécurité
     emitLog(sid, '📍 [2/2] MaSécurité.interieur.gouv.fr...\n');
     try {
       const msResults = await scrapeMaSecurite(what, where);
-      msResults.forEach((row) =>
+      msResults.forEach(row =>
         allRows.push({
           source: 'MaSécurité',
           nom: row.nom,
@@ -228,9 +233,9 @@ app.post('/api/search', async (req: Request, res: Response) => {
   }
 });
 
-/* ============================================================
- * EXPORT XLSX
- * ============================================================ */
+/* =========================
+ *  EXPORT XLSX
+ * ========================= */
 app.post('/api/download/xlsx', async (req: Request, res: Response) => {
   const { what, where = '', maxPages = 3 } = req.body;
 
@@ -256,9 +261,9 @@ app.post('/api/download/xlsx', async (req: Request, res: Response) => {
   }
 });
 
-/* ============================================================
- * HELPERS
- * ============================================================ */
+/* =========================
+ *  HELPERS
+ * ========================= */
 function extractVille(adresse: string): string {
   const match = adresse.match(/\d{5}\s+(.+?)$/);
   return match ? match[1].trim() : '';
@@ -273,16 +278,25 @@ function detectType(nom: string): string {
   return 'Autre';
 }
 
-/* ============================================================
- * FALLBACK ANGULAR (si front servi par Express)
- * ============================================================ */
+/* =========================
+ *  FALLBACK ANGULAR
+ * ========================= */
 app.get('*', (_req: Request, res: Response) => {
-  res.sendFile('index.html', { root: 'dist/annuaire-app/browser' });
+  res.sendFile(path.join(distFolder, 'index.html'));
 });
 
-/* ============================================================
- * START
- * ============================================================ */
-app.listen(PORT, () => {
-  ORIG_CONSOLE.log(`🚀 Serveur démarré sur port ${PORT}`);
+/* =========================
+ *  START (avec ta bannière)
+ * ========================= */
+app.listen(port, '0.0.0.0', () => {
+  console.log('\n╔════════════════════════════════════════╗');
+  console.log('║ 🚀 SERVEUR SCRAPER UNIFIÉ              ║');
+  console.log('╚════════════════════════════════════════╝');
+  console.log(`\n✅ Serveur sur http://0.0.0.0:${port}`);
+  console.log(`📍 Routes API:`);
+  console.log(`   - GET  /api/health`);
+  console.log(`   - GET  /api/logs/:sessionId  (SSE)`);
+  console.log(`   - POST /api/search`);
+  console.log(`   - POST /api/download/xlsx`);
+  console.log(`💡 CTRL+C pour arrêter\n`);
 });

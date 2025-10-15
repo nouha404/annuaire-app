@@ -1,8 +1,6 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, Subject } from 'rxjs';
-
-const API = 'http://localhost:3000/api';
+import { Subject } from 'rxjs';
 
 export interface Row {
   source: string;
@@ -31,45 +29,38 @@ export interface SearchResponse {
   sessionId: string;
 }
 
-@Injectable({
-  providedIn: 'root',
-})
+@Injectable({ providedIn: 'root' })
 export class AnnuaireService {
+  // ✅ base vide => appels relatifs sur le même domaine (Railway)
+  private readonly base = '';
+
   private logSubject = new Subject<string>();
   public logs$ = this.logSubject.asObservable();
-  
   private eventSource: EventSource | null = null;
 
   constructor(private http: HttpClient) {}
 
-  /**
-   * Démarre l'écoute des logs SSE
-   */
+  /** Démarre l'écoute des logs SSE */
   startListeningLogs(sessionId: string): void {
     this.stopListeningLogs(); // Arrêter l'ancien si existe
-    
-    this.eventSource = new EventSource(`${API}/logs/${sessionId}`);
-    
+    // ✅ URL relative (pas de localhost)
+    this.eventSource = new EventSource(`${this.base}/api/logs/${sessionId}`);
+
     this.eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'log') {
-          this.logSubject.next(data.message);
-        }
+        if (data.type === 'log') this.logSubject.next(data.message);
       } catch (e) {
-        console.error('Erreur parsing log:', e);
+        // on ne relance pas la SSE pour un log malformé
       }
     };
-    
-    this.eventSource.onerror = (error) => {
-      console.error('Erreur SSE:', error);
+
+    this.eventSource.onerror = () => {
       this.stopListeningLogs();
     };
   }
 
-  /**
-   * Arrête l'écoute des logs
-   */
+  /** Arrête l'écoute des logs */
   stopListeningLogs(): void {
     if (this.eventSource) {
       this.eventSource.close();
@@ -77,44 +68,33 @@ export class AnnuaireService {
     }
   }
 
-  /**
-   * Recherche unifiée avec génération de sessionId
-   */
+  /** Recherche unifiée avec génération de sessionId */
   async search(what: string, where: string, maxPages: number): Promise<SearchResponse> {
-    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    
-    // Démarrer l'écoute des logs AVANT la recherche
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     this.startListeningLogs(sessionId);
-    
+
     try {
-      const response = await this.http
-        .post<SearchResponse>(`${API}/search`, {
-          what,
-          where,
-          maxPages,
-          sessionId
-        })
-        .toPromise();
-      
+      // ✅ URL relative (pas de localhost)
+      const response = await this.http.post<SearchResponse>(
+        `${this.base}/api/search`,
+        { what, where, maxPages, sessionId }
+      ).toPromise();
+
       return response!;
     } finally {
-      // Arrêter l'écoute après 30 secondes
-      setTimeout(() => {
-        this.stopListeningLogs();
-      }, 30000);
+      setTimeout(() => this.stopListeningLogs(), 30000);
     }
   }
 
-  /**
-   * Téléchargement XLSX
-   */
+  /** Téléchargement XLSX */
   async downloadXlsx(what: string, where: string, maxPages: number): Promise<Blob> {
-    const response = await this.http
-      .post(`${API}/download/xlsx`, { what, where, maxPages }, {
-        responseType: 'blob',
-      })
-      .toPromise();
-    
+    // ✅ URL relative (pas de localhost)
+    const response = await this.http.post(
+      `${this.base}/api/download/xlsx`,
+      { what, where, maxPages },
+      { responseType: 'blob' }
+    ).toPromise();
+
     return response!;
   }
 }
