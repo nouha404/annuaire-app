@@ -3,6 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import * as XLSX from 'xlsx';
 import util from 'node:util';
+import fs from 'fs';
 
 // ============================================
 // 🔵 LOGS DE DEBUG AU DÉMARRAGE
@@ -10,7 +11,7 @@ import util from 'node:util';
 console.log('🔵 Server script starting...');
 console.log('📂 Working directory:', process.cwd());
 console.log('📂 Node version:', process.version);
-console.log('📂 Environment:', process.env.NODE_ENV || 'development');
+console.log('📂 Environment:', process.env['NODE_ENV'] || 'development');
 
 // Test de chargement des modules avant import
 console.log('🔍 Testing module loading...');
@@ -42,7 +43,7 @@ console.log('✅ All modules loaded successfully');
 // ============================================
 const app = express();
 // ✅ RAILWAY CRITICAL: Utiliser le port fourni par Railway
-const port = parseInt(process.env.PORT || '3000', 10);
+const port = parseInt(process.env['PORT'] || '3000', 10);
 
 console.log(`🔧 Configured port: ${port}`);
 
@@ -78,7 +79,6 @@ const distFolder = path.join(process.cwd(), 'dist/annuaire-app/browser');
 console.log('📂 Angular dist folder:', distFolder);
 
 // Vérifier que le dossier existe
-const fs = require('fs');
 if (fs.existsSync(distFolder)) {
   console.log('✅ Angular dist folder exists');
   const files = fs.readdirSync(distFolder);
