@@ -90,8 +90,54 @@
             class="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-all">
             📊 Excel
           </button>
+
+          <button 
+            type="button"
+            (click)="toggleLogs()"
+            class="px-6 py-3 bg-gray-600 text-white font-semibold rounded-xl hover:bg-gray-700 transition-all">
+            {{showLogs ? '🙈 Masquer logs' : '👁️ Afficher logs'}}
+          </button>
         </div>
       </form>
+    </div>
+
+    <!-- 🔥 ZONE DE LOGS EN TEMPS RÉEL -->
+    <div *ngIf="showLogs && (isLoading || logs.length > 0)" 
+         class="bg-gray-900 rounded-2xl shadow-2xl p-6 mb-8 text-white font-mono text-sm">
+      
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2">
+          <span class="text-2xl">📟</span>
+          <h3 class="font-bold text-lg">Logs en temps réel</h3>
+          <span class="px-2 py-1 bg-green-500 text-white text-xs rounded-full animate-pulse">
+            LIVE
+          </span>
+        </div>
+        <button 
+          (click)="clearLogs()"
+          class="px-3 py-1 bg-red-600 hover:bg-red-700 rounded-lg text-xs transition-colors">
+          🗑️ Effacer
+        </button>
+      </div>
+
+      <div 
+        id="logs-container"
+        class="bg-black rounded-lg p-4 h-96 overflow-y-auto space-y-1 scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800">
+        
+        <div *ngIf="logs.length === 0" class="text-gray-500 italic">
+          En attente des logs...
+        </div>
+
+        <div *ngFor="let log of logs" 
+             class="text-green-400 hover:bg-gray-800 px-2 py-0.5 rounded transition-colors">
+          {{log}}
+        </div>
+      </div>
+
+      <div class="mt-3 flex items-center justify-between text-xs text-gray-400">
+        <span>{{logs.length}} lignes</span>
+        <span>Auto-scroll activé</span>
+      </div>
     </div>
 
     <!-- ALERTE ERREUR -->
@@ -115,16 +161,7 @@
         
         <div>
           <h3 class="text-xl font-semibold text-gray-900 mb-2">🔍 Scraping en cours...</h3>
-          <p class="text-gray-600 mb-2">{{loadingStep}}</p>
-          
-          <!-- Barre de progression -->
-          <div class="w-full max-w-md mx-auto mt-4">
-            <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div class="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-300" 
-                   [style.width.%]="progress"></div>
-            </div>
-            <p class="text-sm text-gray-500 mt-2">{{progress}}% terminé</p>
-          </div>
+          <p class="text-gray-600">Consultez les logs ci-dessus pour suivre la progression</p>
         </div>
       </div>
     </div>
@@ -277,7 +314,7 @@
       <h3 class="text-xl font-semibold text-gray-900 mb-2">Aucun résultat trouvé</h3>
       <p class="text-gray-600 mb-6">Essayez avec d'autres mots-clés</p>
       <button 
-        (click)="what = ''; where = ''" 
+        (click)="what = ''; where = ''; clearLogs()" 
         class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
         Nouvelle recherche
       </button>
@@ -289,10 +326,10 @@
   <footer class="bg-white border-t border-gray-200 mt-12">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       <div class="flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-gray-600">
-        <span>Powered by <strong class="text-gray-900">Selenium + Angular + Express</strong></span>
+        <span>Powered by <strong class="text-gray-900">Selenium + Angular + Express + SSE</strong></span>
         <div class="flex gap-4">
           <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">✓ Service-Public.fr</span>
-          <span class="px-3 py-1 bg-gray-200 text-gray-500 rounded-full text-xs">⏳ MaSécurité (bientôt)</span>
+          <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">✓ MaSécurité.gouv.fr</span>
         </div>
       </div>
     </div>

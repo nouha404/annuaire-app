@@ -1,5 +1,6 @@
-import { Component } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { AnnuaireService, Row } from './annuaire.service';
+import { Subscription } from 'rxjs';
 
 type TabId = 'service-public' | 'masecurite';
 
@@ -8,7 +9,7 @@ type TabId = 'service-public' | 'masecurite';
   templateUrl: './app.component.html',
   styleUrls: ['./app.component.css'],
 })
-export class AppComponent {
+export class AppComponent implements OnInit, OnDestroy {
   title = 'annuaire-app';
   what = '';
   where = '';
@@ -21,19 +22,51 @@ export class AppComponent {
   rowsServicePublic: Row[] = [];
   rowsMaSecurite: Row[] = [];
   
-  // États de chargement par source
+  // États de chargement
   loadingServicePublic = false;
   loadingMaSecurite = false;
   
-  // Erreurs par source
+  // Erreurs
   errorServicePublic = '';
   errorMaSecurite = '';
   
   // Progression
   loadingStep = '';
   progress = 0;
+  
+  // 🔥 LOGS EN TEMPS RÉEL
+  logs: string[] = [];
+  showLogs = true; // Afficher la zone de logs par défaut
+  private logSubscription?: Subscription;
 
   constructor(private api: AnnuaireService) {}
+
+  ngOnInit() {
+    // S'abonner aux logs
+    this.logSubscription = this.api.logs$.subscribe((log: string) => {
+      this.logs.push(log);
+      
+      // Auto-scroll vers le bas
+      setTimeout(() => {
+        const logsContainer = document.getElementById('logs-container');
+        if (logsContainer) {
+          logsContainer.scrollTop = logsContainer.scrollHeight;
+        }
+      }, 100);
+      
+      // Limiter à 200 lignes pour éviter la surcharge
+      if (this.logs.length > 200) {
+        this.logs = this.logs.slice(-200);
+      }
+    });
+  }
+
+  ngOnDestroy() {
+    if (this.logSubscription) {
+      this.logSubscription.unsubscribe();
+    }
+    this.api.stopListeningLogs();
+  }
 
   // Getter pour les résultats de l'onglet actif
   get currentRows(): Row[] {
@@ -57,6 +90,16 @@ export class AppComponent {
     this.activeTab = tab;
   }
 
+  // Toggle logs
+  toggleLogs() {
+    this.showLogs = !this.showLogs;
+  }
+
+  // Clear logs
+  clearLogs() {
+    this.logs = [];
+  }
+
   async onSearch() {
     if (!this.what.trim()) {
       this.errorServicePublic = 'Veuillez entrer un terme de recherche';
@@ -68,33 +111,20 @@ export class AppComponent {
     this.errorMaSecurite = '';
     this.rowsServicePublic = [];
     this.rowsMaSecurite = [];
+    this.logs = [];
     this.loadingServicePublic = true;
     this.progress = 0;
+    this.showLogs = true; // Afficher les logs pendant la recherche
 
     try {
-      this.loadingStep = '📡 Connexion à Service-Public.fr...';
-      this.progress = 10;
-      await this.wait(500);
-
-      this.loadingStep = '🔍 Recherche des résultats...';
-      this.progress = 20;
-      await this.wait(500);
-
-      this.loadingStep = '🔗 Collecte des liens...';
-      this.progress = 40;
+      this.loadingStep = '📡 Initialisation du scraping...';
+      this.progress = 5;
 
       const resp = await this.api.search(
         this.what.trim(),
         this.where.trim(),
         Number(this.maxPages)
       );
-
-      this.loadingStep = '📥 Extraction des données...';
-      this.progress = 70;
-      await this.wait(300);
-
-      this.loadingStep = '✨ Finalisation...';
-      this.progress = 90;
 
       // Séparer les résultats par source
       this.rowsServicePublic = resp.rows.filter(r => r.source === 'Service-Public');
@@ -106,7 +136,7 @@ export class AppComponent {
       console.log(`✅ Service-Public: ${this.rowsServicePublic.length}`);
       console.log(`✅ MaSécurité: ${this.rowsMaSecurite.length}`);
 
-      await this.wait(500);
+      await this.wait(1000);
 
     } catch (e: any) {
       this.errorServicePublic = e?.error?.error || e?.message || 'Erreur de recherche';
@@ -125,7 +155,6 @@ export class AppComponent {
     }
 
     try {
-      // Générer le CSV côté client à partir des données déjà récupérées
       const cols = ['source', 'nom', 'adresse', 'telephone', 'ville', 'type', 'region', 'statut'];
       const escapeCSV = (val: any) => {
         const str = String(val ?? '').replace(/\r?\n/g, ' ').trim();
