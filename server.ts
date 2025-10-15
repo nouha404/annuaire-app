@@ -10,6 +10,7 @@ import util from 'node:util';
 console.log('🔵 Server script starting...');
 console.log('📂 Working directory:', process.cwd());
 console.log('📂 Node version:', process.version);
+console.log('📂 Environment:', process.env.NODE_ENV || 'development');
 
 // Test de chargement des modules avant import
 console.log('🔍 Testing module loading...');
@@ -40,7 +41,10 @@ console.log('✅ All modules loaded successfully');
 // 🚀 CONFIGURATION EXPRESS
 // ============================================
 const app = express();
-const port = 3000;
+// ✅ RAILWAY CRITICAL: Utiliser le port fourni par Railway
+const port = parseInt(process.env.PORT || '3000', 10);
+
+console.log(`🔧 Configured port: ${port}`);
 
 app.set('trust proxy', 1);
 
@@ -49,10 +53,46 @@ app.use(cors());
 app.use(express.json());
 
 // ============================================
+// 🏥 HEALTHCHECK ENDPOINT (RAILWAY)
+// ============================================
+app.get('/health', (req: Request, res: Response) => {
+  res.status(200).json({ 
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+app.get('/api/health', (req: Request, res: Response) => {
+  res.status(200).json({ 
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+// ============================================
 // 📁 SERVE ANGULAR BUILD
 // ============================================
 const distFolder = path.join(process.cwd(), 'dist/annuaire-app/browser');
 console.log('📂 Angular dist folder:', distFolder);
+
+// Vérifier que le dossier existe
+const fs = require('fs');
+if (fs.existsSync(distFolder)) {
+  console.log('✅ Angular dist folder exists');
+  const files = fs.readdirSync(distFolder);
+  console.log(`📂 Files in dist folder: ${files.length} files`);
+} else {
+  console.error('❌ Angular dist folder NOT FOUND!');
+  console.error('   Expected path:', distFolder);
+  // Lister ce qui existe
+  const distRoot = path.join(process.cwd(), 'dist');
+  if (fs.existsSync(distRoot)) {
+    console.log('📂 Contents of dist/:', fs.readdirSync(distRoot));
+  }
+}
+
 app.use(express.static(distFolder));
 
 // ============================================
@@ -165,7 +205,7 @@ interface UnifiedRow {
 }
 
 app.post('/api/search', async (req: Request, res: Response): Promise<void> => {
-  const { what, where = '', maxPages = 3, sessionId } = req.body;
+  const { what, where = '', maxPages = 999, sessionId } = req.body;
   
   if (!what) {
     res.status(400).json({
@@ -291,7 +331,7 @@ app.post('/api/search', async (req: Request, res: Response): Promise<void> => {
 // 📊 ENDPOINT : EXPORT XLSX
 // ============================================
 app.post('/api/download/xlsx', async (req: Request, res: Response): Promise<void> => {
-  const { what, where = '', maxPages = 3 } = req.body;
+  const { what, where = '', maxPages = 999 } = req.body;
   
   if (!what) {
     res.status(400).json({ error: 'Paramètre "what" requis' });
@@ -351,33 +391,57 @@ app.post('/api/download/xlsx', async (req: Request, res: Response): Promise<void
 // 🏠 FALLBACK : ANGULAR SPA
 // ============================================
 app.get('*', (req: Request, res: Response) => {
-  res.sendFile(path.join(distFolder, 'index.html'));
+  const indexPath = path.join(distFolder, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).send('Application not found. Build may have failed.');
+  }
 });
 
 // ============================================
 // 🚀 DÉMARRAGE DU SERVEUR
 // ============================================
-app.listen(port, '0.0.0.0', () => {
+const server = app.listen(port, '0.0.0.0', () => {
   console.log('');
   console.log('╔════════════════════════════════════════╗');
   console.log('║   ✅ SERVER STARTED SUCCESSFULLY      ║');
   console.log('╚════════════════════════════════════════╝');
-  console.log(`   🌐 URL: http://localhost:${port}`);
+  console.log(`   🌐 URL: http://0.0.0.0:${port}`);
   console.log(`   📂 Serving: ${distFolder}`);
+  console.log(`   🏥 Healthcheck: http://0.0.0.0:${port}/health`);
   console.log('');
-}).on('error', (err: any) => {
+});
+
+server.on('error', (err: any) => {
   if (err.code === 'EADDRINUSE') {
     console.error('');
     console.error('╔════════════════════════════════════════╗');
     console.error('║   ❌ PORT ALREADY IN USE              ║');
     console.error('╚════════════════════════════════════════╝');
     console.error(`   Port ${port} is already in use`);
-    console.error('   Run: lsof -i :3000 to find the process');
     console.error('');
   } else {
     console.error('❌ Server error:', err);
   }
   process.exit(1);
+});
+
+// Gestion propre de l'arrêt
+process.on('SIGTERM', () => {
+  console.log('🛑 SIGTERM received, shutting down gracefully...');
+  server.close(() => {
+    console.log('✅ Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 SIGINT received, shutting down gracefully...');
+  server.close(() => {
+    console.log('✅ Server closed');
+    process.exit(0);
+  });
 });
 
 // ============================================

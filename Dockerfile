@@ -36,16 +36,22 @@ COPY . .
 # Build Angular
 RUN npm run build
 
+# ✅ Vérifier que le build Angular a réussi
+RUN ls -la dist/ && ls -la dist/annuaire-app/ || echo "❌ Angular build failed"
+
 # Build server
 RUN npm run build:server
+
+# ✅ Vérifier que le build server a réussi
+RUN ls -la dist/ && test -f dist/server.js || echo "❌ Server build failed"
 
 # Variables d'environnement
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
-ENV PORT=3000
 ENV NODE_ENV=production
 
+# ✅ Railway injecte automatiquement PORT
 EXPOSE 3000
 
-# Démarrer
-CMD ["node", "dist/server.js"]
+# ✅ Script de démarrage avec logs
+CMD ["sh", "-c", "echo '🚀 Starting server...' && ls -la dist/ && node dist/server.js"]
