@@ -134,7 +134,7 @@ async function getAllOrganismUrls(driver: WebDriver): Promise<string[]> {
       const button = nextButtons[0];
       
       await driver.executeScript('arguments[0].scrollIntoView({block: "center", behavior: "auto"});', button);
-      await driver.sleep(300); // ⚡ Réduit de 1000 à 300
+      await driver.sleep(200); // ⚡ Réduit de 1000 à 300
 
       const isDisplayed = await button.isDisplayed();
       const isEnabled = await button.isEnabled();
@@ -152,7 +152,7 @@ async function getAllOrganismUrls(driver: WebDriver): Promise<string[]> {
       
       console.log('   ✅ Clic effectué, attente du chargement...');
 
-      await driver.sleep(800); // ⚡ Réduit de 3000 à 800
+      await driver.sleep(500); // ⚡ Réduit de 3000 à 800
 
       // ⚡ Timeout réduit pour l'attente des résultats
       try {
@@ -172,7 +172,7 @@ async function getAllOrganismUrls(driver: WebDriver): Promise<string[]> {
       console.error('   ❌ Erreur lors du clic:', (e as Error).message);
       
       if (clickCount < 2) {
-        await driver.sleep(500); // ⚡ Réduit de 2000 à 500
+        await driver.sleep(300); // ⚡ Réduit de 2000 à 500
         clickCount++;
         continue;
       }

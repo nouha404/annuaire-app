@@ -222,7 +222,7 @@ async function scrapeWithDriver(
       input.focus();
       input.click();
     `, searchInput);
-    await driver.sleep(200); // ⚡ Réduit de 500 à 200
+    await driver.sleep(50); // ⚡ Réduit de 500 à 200
     
     console.log('   ✅ Champ activé');
   } catch (e) {
@@ -282,7 +282,7 @@ async function scrapeWithDriver(
     await driver.executeScript('arguments[0].click();', firstSuggestion);
     
     console.log('   ⏳ Chargement des résultats...');
-    await driver.sleep(2000); // ⚡ Réduit de 5000 à 2000
+    await driver.sleep(1500); // ⚡ Réduit de 5000 à 2000
 
     const pageResults = await extractResults(driver);
     console.log(`   ✅ ${pageResults.length} établissement(s) récupéré(s)`);

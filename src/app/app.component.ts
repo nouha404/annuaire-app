@@ -13,7 +13,7 @@ export class AppComponent implements OnInit, OnDestroy {
   title = 'annuaire-app';
   what = '';
   where = '';
-  maxPages = 3;
+  maxPages = 999; // ✅ Fixé en dur, plus de sélection utilisateur
   
   // Système d'onglets
   activeTab: TabId = 'service-public';
@@ -34,9 +34,14 @@ export class AppComponent implements OnInit, OnDestroy {
   loadingStep = '';
   progress = 0;
   
+  // ⏱️ Chronomètre
+  elapsedTime = 0;
+  totalDuration = 0;
+  private timerInterval?: any;
+  
   // 🔥 LOGS EN TEMPS RÉEL
   logs: string[] = [];
-  showLogs = true; // Afficher la zone de logs par défaut
+  showLogs = true;
   private logSubscription?: Subscription;
 
   constructor(private api: AnnuaireService) {}
@@ -66,6 +71,7 @@ export class AppComponent implements OnInit, OnDestroy {
       this.logSubscription.unsubscribe();
     }
     this.api.stopListeningLogs();
+    this.stopTimer();
   }
 
   // Getter pour les résultats de l'onglet actif
@@ -83,6 +89,23 @@ export class AppComponent implements OnInit, OnDestroy {
     return this.activeTab === 'service-public' 
       ? this.errorServicePublic 
       : this.errorMaSecurite;
+  }
+
+  // ⏱️ Gestion du chronomètre
+  private startTimer() {
+    this.elapsedTime = 0;
+    this.stopTimer();
+    this.timerInterval = setInterval(() => {
+      this.elapsedTime++;
+    }, 1000);
+  }
+
+  private stopTimer() {
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = undefined;
+      this.totalDuration = this.elapsedTime;
+    }
   }
 
   // Changer d'onglet
@@ -114,7 +137,11 @@ export class AppComponent implements OnInit, OnDestroy {
     this.logs = [];
     this.loadingServicePublic = true;
     this.progress = 0;
-    this.showLogs = true; // Afficher les logs pendant la recherche
+    this.showLogs = true;
+    this.totalDuration = 0;
+    
+    // ⏱️ Démarrer le chronomètre
+    this.startTimer();
 
     try {
       this.loadingStep = '📡 Initialisation du scraping...';
@@ -123,7 +150,7 @@ export class AppComponent implements OnInit, OnDestroy {
       const resp = await this.api.search(
         this.what.trim(),
         this.where.trim(),
-        Number(this.maxPages)
+        this.maxPages
       );
 
       // Séparer les résultats par source
@@ -144,9 +171,12 @@ export class AppComponent implements OnInit, OnDestroy {
     } finally {
       this.loadingServicePublic = false;
       this.loadingStep = '';
+      // ⏱️ Arrêter le chronomètre
+      this.stopTimer();
     }
   }
 
+  // Export CSV de l'onglet actif
   async onExportCsv() {
     const rows = this.currentRows;
     if (rows.length === 0) {
@@ -186,38 +216,41 @@ export class AppComponent implements OnInit, OnDestroy {
     }
   }
 
-  async onExportXlsx() {
-    const rows = this.currentRows;
-    if (rows.length === 0) {
+  // ✅ NOUVEAU: Export CSV fusionné des deux sources
+  async onExportCsvFused() {
+    const allRows = [...this.rowsServicePublic, ...this.rowsMaSecurite];
+    
+    if (allRows.length === 0) {
       alert('Aucun résultat à exporter');
       return;
     }
 
     try {
-      this.loadingServicePublic = true;
-      this.loadingStep = '📊 Génération du fichier Excel...';
+      const cols = ['source', 'nom', 'adresse', 'telephone', 'ville', 'type', 'region', 'statut', 'email', 'site', 'url'];
+      const escapeCSV = (val: any) => {
+        const str = String(val ?? '').replace(/\r?\n/g, ' ').trim();
+        if (str.includes(',') || str.includes('"')) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      };
       
-      const blob = await this.api.downloadXlsx(
-        this.what.trim(),
-        this.where.trim(),
-        Number(this.maxPages)
-      );
+      const header = cols.join(',');
+      const body = allRows.map(r => cols.map(c => escapeCSV((r as any)[c])).join(',')).join('\n');
+      const csv = '\ufeff' + header + '\n' + body;
       
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const fileName = this.activeTab === 'service-public' 
-        ? `service-public_${this.what.replace(/\s+/g, '_')}.xlsx`
-        : `masecurite_${this.what.replace(/\s+/g, '_')}.xlsx`;
-      a.download = fileName;
+      a.download = `fusion_${this.what.replace(/\s+/g, '_')}_${allRows.length}_resultats.csv`;
       a.click();
       URL.revokeObjectURL(url);
+      
+      console.log(`✅ CSV fusionné exporté: ${allRows.length} lignes (Service-Public: ${this.rowsServicePublic.length}, MaSécurité: ${this.rowsMaSecurite.length})`);
     } catch (e) {
-      alert('Export XLSX échoué.');
+      alert('Export CSV fusionné échoué.');
       console.error(e);
-    } finally {
-      this.loadingServicePublic = false;
-      this.loadingStep = '';
     }
   }
 
