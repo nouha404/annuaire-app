@@ -1,42 +1,153 @@
-// server.ts
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import path from 'path';
 import * as XLSX from 'xlsx';
 import util from 'node:util';
+
+// ============================================
+// 🔵 LOGS DE DEBUG AU DÉMARRAGE
+// ============================================
+console.log('🔵 Server script starting...');
+console.log('📂 Working directory:', process.cwd());
+console.log('📂 Node version:', process.version);
+
+// Test de chargement des modules avant import
+console.log('🔍 Testing module loading...');
+try {
+  require('./api/scraper');
+  console.log('✅ api/scraper found');
+} catch (err: any) {
+  console.error('❌ Cannot load api/scraper:', err.message);
+  console.error('   Path attempted:', path.join(__dirname, 'api/scraper'));
+  process.exit(1);
+}
+
+try {
+  require('./api/scraper-masecurite');
+  console.log('✅ api/scraper-masecurite found');
+} catch (err: any) {
+  console.error('❌ Cannot load api/scraper-masecurite:', err.message);
+  process.exit(1);
+}
+
+// Import réel après vérification
 import { scrape as scrapeServicePublic } from './api/scraper';
 import { scrapeMaSecurite } from './api/scraper-masecurite';
 
-const app = express();
-const port = Number(process.env.PORT || 3000);
+console.log('✅ All modules loaded successfully');
 
-/* =========================
- *  CORS (whitelist optionnelle)
- * ========================= */
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
+// ============================================
+// 🚀 CONFIGURATION EXPRESS
+// ============================================
+const app = express();
+const port = 3000;
 
 app.set('trust proxy', 1);
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin || allowedOrigins.length === 0) return cb(null, true);
-    return allowedOrigins.includes(origin) ? cb(null, true) : cb(new Error('Not allowed by CORS'));
-  }
-}));
 
+// CORS simple et permissif
+app.use(cors());
 app.use(express.json());
 
-/* =========================
- *  SERVE ANGULAR BUILD (si front + API ensemble)
- * ========================= */
+// ============================================
+// 📁 SERVE ANGULAR BUILD
+// ============================================
 const distFolder = path.join(process.cwd(), 'dist/annuaire-app/browser');
+console.log('📂 Angular dist folder:', distFolder);
 app.use(express.static(distFolder));
 
-/* =========================
- *  Types communs
- * ========================= */
+// ============================================
+// 💾 STOCKAGE DES SESSIONS SSE
+// ============================================
+interface LogSession {
+  clients: Response[];
+  logs: string[];
+}
+
+const sessions = new Map<string, LogSession>();
+
+// ⚡ SAUVEGARDE DU console.log ORIGINAL (GLOBAL)
+const originalConsoleLog = console.log;
+
+function log(sessionId: string, message: string) {
+  const timestamp = new Date().toISOString().substring(11, 19);
+  const formattedLog = `[${timestamp}] ${message}`;
+  
+  // ✅ Utilise la version ORIGINALE pour éviter la boucle infinie
+  originalConsoleLog(formattedLog);
+  
+  const session = sessions.get(sessionId);
+  if (!session) return;
+  
+  session.logs.push(formattedLog);
+  
+  const sseData = JSON.stringify({
+    type: 'log',
+    message: formattedLog,
+    timestamp: Date.now()
+  });
+  
+  session.clients.forEach(client => {
+    try {
+      client.write(`data: ${sseData}\n\n`);
+    } catch (e) {
+      originalConsoleLog('SSE write error:', e);
+    }
+  });
+}
+
+// ============================================
+// 🔌 ENDPOINT SSE : LOGS EN TEMPS RÉEL
+// ============================================
+app.get('/api/logs/:sessionId', (req: Request, res: Response) => {
+  const { sessionId } = req.params;
+  
+  originalConsoleLog(`📡 SSE connection opened: ${sessionId}`);
+  
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  
+  if (!sessions.has(sessionId)) {
+    sessions.set(sessionId, { clients: [], logs: [] });
+  }
+  
+  const session = sessions.get(sessionId)!;
+  session.clients.push(res);
+  
+  // Heartbeat toutes les 30s
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': heartbeat\n\n');
+    } catch (e) {
+      clearInterval(heartbeat);
+    }
+  }, 30000);
+  
+  req.on('close', () => {
+    originalConsoleLog(`📡 SSE connection closed: ${sessionId}`);
+    clearInterval(heartbeat);
+    
+    const session = sessions.get(sessionId);
+    if (session) {
+      session.clients = session.clients.filter(c => c !== res);
+      
+      if (session.clients.length === 0) {
+        setTimeout(() => {
+          const s = sessions.get(sessionId);
+          if (s && s.clients.length === 0) {
+            sessions.delete(sessionId);
+            originalConsoleLog(`🗑️  Session deleted: ${sessionId}`);
+          }
+        }, 60000);
+      }
+    }
+  });
+});
+
+// ============================================
+// 🔍 ENDPOINT : RECHERCHE UNIFIÉE
+// ============================================
 interface UnifiedRow {
   source: string;
   nom: string;
@@ -44,259 +155,254 @@ interface UnifiedRow {
   telephone: string;
   ville: string;
   type: string;
+  region?: string;
+  statut?: string;
   email?: string;
   site?: string;
-  region?: string;
+  url?: string;
   latitude?: string;
   longitude?: string;
-  statut?: string;
-  url?: string;
 }
 
-/* =========================
- *  LOGS SÉCURISÉS (pas de récursion)
- * ========================= */
-const logsStore = new Map<string, string[]>();
-
-const ORIG_CONSOLE = {
-  log: console.log.bind(console),
-  info: console.info.bind(console),
-  warn: console.warn.bind(console),
-  error: console.error.bind(console),
-};
-
-function formatArgs(args: any[]): string {
-  return args.map(a =>
-    typeof a === 'string'
-      ? a
-      : util.inspect(a, { depth: 4, colors: false, maxArrayLength: 200, maxStringLength: 2000, compact: 3 })
-  ).join(' ');
-}
-
-function appendLog(sessionId: string, message: string) {
-  if (!logsStore.has(sessionId)) logsStore.set(sessionId, []);
-  const ts = new Date().toLocaleTimeString();
-  logsStore.get(sessionId)!.push(`[${ts}] ${message}`);
-}
-
-function emitLog(sessionId: string, message: string) {
-  appendLog(sessionId, message);
-  ORIG_CONSOLE.log(message);
-}
-
-function captureConsoleLogs(sessionId: string) {
-  const restore = {
-    log: console.log, info: console.info, warn: console.warn, error: console.error,
-  };
-
-  console.log = (...args: any[]) => { const msg = formatArgs(args); appendLog(sessionId, msg); ORIG_CONSOLE.log(msg); };
-  console.info = (...args: any[]) => { const msg = formatArgs(args); appendLog(sessionId, msg); ORIG_CONSOLE.info(msg); };
-  console.warn = (...args: any[]) => { const msg = formatArgs(args); appendLog(sessionId, msg); ORIG_CONSOLE.warn(msg); };
-  console.error = (...args: any[]) => { const msg = '❌ ' + formatArgs(args); appendLog(sessionId, msg); ORIG_CONSOLE.error(msg); };
-
-  return () => { console.log = restore.log; console.info = restore.info; console.warn = restore.warn; console.error = restore.error; };
-}
-
-/* =========================
- *  HEALTHCHECK (Railway)
- * ========================= */
-app.get('/api/health', (_req, res) => res.json({ ok: true }));
-
-/* =========================
- *  SSE LOGS (avec heartbeat)
- * ========================= */
-app.get('/api/logs/:sessionId', (req: Request, res: Response) => {
-  const { sessionId } = req.params;
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.flushHeaders?.();
-
-  res.write('data: {"type":"connected"}\n\n');
-
-  if (logsStore.has(sessionId)) {
-    for (const log of logsStore.get(sessionId)!) {
-      res.write(`data: ${JSON.stringify({ type: 'log', message: log })}\n\n`);
-    }
-  }
-
-  let lastIndex = logsStore.get(sessionId)?.length || 0;
-  const pushInterval = setInterval(() => {
-    if (!logsStore.has(sessionId)) return;
-    const logs = logsStore.get(sessionId)!;
-    for (const log of logs.slice(lastIndex)) {
-      res.write(`data: ${JSON.stringify({ type: 'log', message: log })}\n\n`);
-    }
-    lastIndex = logs.length;
-  }, 500);
-
-  const heartbeat = setInterval(() => res.write(':\n\n'), 15000);
-
-  req.on('close', () => {
-    clearInterval(pushInterval);
-    clearInterval(heartbeat);
-    setTimeout(() => logsStore.delete(sessionId), 5 * 60 * 1000);
-  });
-});
-
-/* =========================
- *  ENDPOINT PRINCIPAL /api/search
- * ========================= */
-app.post('/api/search', async (req: Request, res: Response) => {
+app.post('/api/search', async (req: Request, res: Response): Promise<void> => {
   const { what, where = '', maxPages = 3, sessionId } = req.body;
-
-  if (!what) return res.status(400).json({ error: 'Le paramètre "what" est requis' });
-
+  
+  if (!what) {
+    res.status(400).json({
+      success: false,
+      error: 'Le paramètre "what" est requis'
+    });
+    return;
+  }
+  
   const sid = sessionId || `session_${Date.now()}`;
-  logsStore.set(sid, []);
-  const restoreConsole = captureConsoleLogs(sid);
-
+  
+  if (!sessions.has(sid)) {
+    sessions.set(sid, { clients: [], logs: [] });
+  }
+  
+  log(sid, `🔍 Nouvelle recherche: "${what}" | Lieu: "${where || 'France entière'}" | Pages: ${maxPages}`);
+  
   try {
-    emitLog(sid, '╔═══════════════════════════════════════╗');
-    emitLog(sid, '║   🔍 SCRAPING UNIFIÉ (2 SOURCES)     ║');
-    emitLog(sid, '╚═══════════════════════════════════════╝');
-    emitLog(sid, `   Recherche: "${what}"`);
-    emitLog(sid, `   Localisation: "${where || 'France entière'}"`);
-    emitLog(sid, `   Pages max: ${maxPages}\n`);
-
-    const allRows: UnifiedRow[] = [];
-
-    // 1) Service-Public
-    emitLog(sid, '📍 [1/2] Scraping Service-Public.fr...\n');
+    const allResults: UnifiedRow[] = [];
+    
+    // ==========================================
+    // 1️⃣ SERVICE-PUBLIC.FR
+    // ==========================================
+    log(sid, '📍 [1/2] Scraping Service-Public.fr...');
+    
+    // ✅ Redirection PROPRE du console.log
+    console.log = (...args: any[]) => {
+      const msg = util.format(...args);
+      log(sid, msg);
+    };
+    
     try {
-      const spResults = await scrapeServicePublic(what, where, maxPages);
-      spResults.forEach(row =>
-        allRows.push({
-          source: 'Service-Public',
-          nom: row.nom,
-          adresse: row.adresse,
-          telephone: row.telephone,
-          ville: extractVille(row.adresse),
-          type: detectType(row.nom),
-          email: row.email,
-          site: row.site,
-          region: row.region,
-          latitude: row.latitude,
-          longitude: row.longitude,
-          url: row.url,
-        })
-      );
-      emitLog(sid, `   ✅ Service-Public: ${spResults.length} résultats\n`);
-    } catch (e: any) {
-      emitLog(sid, `   ❌ Erreur Service-Public: ${e.message}\n`);
+      const servicePublicData = await scrapeServicePublic(what, where, maxPages);
+      
+      const servicePublicUnified: UnifiedRow[] = servicePublicData.map(r => ({
+        source: 'Service-Public',
+        nom: r.nom,
+        adresse: r.adresse,
+        telephone: r.telephone,
+        ville: extractVille(r.adresse),
+        type: detectType(r.nom),
+        region: r.region,
+        email: r.email,
+        site: r.site,
+        url: r.url,
+        latitude: r.latitude,
+        longitude: r.longitude
+      }));
+      
+      log(sid, `✅ Service-Public: ${servicePublicUnified.length} résultats`);
+      allResults.push(...servicePublicUnified);
+      
+    } catch (err: any) {
+      log(sid, `❌ Erreur Service-Public: ${err.message}`);
     }
-
-    // 2) MaSécurité
-    emitLog(sid, '📍 [2/2] MaSécurité.interieur.gouv.fr...\n');
+    
+    // ==========================================
+    // 2️⃣ MASÉCURITÉ.GOUV.FR
+    // ==========================================
+    log(sid, '📍 [2/2] Scraping MaSécurité.gouv.fr...');
+    
     try {
-      const msResults = await scrapeMaSecurite(what, where);
-      msResults.forEach(row =>
-        allRows.push({
-          source: 'MaSécurité',
-          nom: row.nom,
-          adresse: row.adresse,
-          telephone: row.telephone,
-          ville: row.ville,
-          type: row.type,
-          statut: row.statut,
-        })
-      );
-      emitLog(sid, `   ✅ MaSécurité: ${msResults.length} résultats\n`);
-    } catch (e: any) {
-      emitLog(sid, `   ❌ Erreur MaSécurité: ${e.message}\n`);
+      const maSecuriteData = await scrapeMaSecurite(what, where);
+      
+      const maSecuriteUnified: UnifiedRow[] = maSecuriteData.map(r => ({
+        source: 'MaSécurité',
+        nom: r.nom,
+        adresse: r.adresse,
+        telephone: r.telephone,
+        ville: r.ville,
+        type: r.type,
+        statut: r.statut
+      }));
+      
+      log(sid, `✅ MaSécurité: ${maSecuriteUnified.length} résultats`);
+      allResults.push(...maSecuriteUnified);
+      
+    } catch (err: any) {
+      log(sid, `❌ Erreur MaSécurité: ${err.message}`);
     }
-
-    const spCount = allRows.filter(r => r.source === 'Service-Public').length;
-    const msCount = allRows.filter(r => r.source === 'MaSécurité').length;
-
-    emitLog(sid, '╔═══════════════════════════════════════╗');
-    emitLog(sid, '║          📊 STATISTIQUES FINALES      ║');
-    emitLog(sid, '╚═══════════════════════════════════════╝');
-    emitLog(sid, `   Service-Public:    ${spCount} résultats`);
-    emitLog(sid, `   MaSécurité:        ${msCount} résultats`);
-    emitLog(sid, '   ─────────────────────────────────────');
-    emitLog(sid, `   ✅ RÉSULTATS UNIQUES: ${allRows.length}\n`);
-
+    
+    // ✅ Restauration du console.log original
+    console.log = originalConsoleLog;
+    
+    // Filtrer les erreurs
+    const cleanResults = allResults.filter(row => 
+      !row.nom.includes('BLOQUÉ-') && 
+      !row.nom.includes('renforce temporairement') &&
+      !row.nom.includes('Erreur-')
+    );
+    
+    log(sid, `✅ Scraping terminé: ${cleanResults.length} résultats uniques`);
+    
+    const servicePublicCount = cleanResults.filter(r => r.source === 'Service-Public').length;
+    const maSecuriteCount = cleanResults.filter(r => r.source === 'MaSécurité').length;
+    
     res.json({
       success: true,
-      rows: allRows,
-      stats: { total: allRows.length, servicePublic: spCount, maSecurite: msCount },
-      sessionId: sid,
+      rows: cleanResults,
+      stats: {
+        total: cleanResults.length,
+        servicePublic: servicePublicCount,
+        maSecurite: maSecuriteCount
+      },
+      sessionId: sid
     });
-  } catch (e: any) {
-    emitLog(sid, `❌ Erreur globale: ${e.message}`);
-    res.status(500).json({ error: e.message });
-  } finally {
-    restoreConsole();
+    
+  } catch (error: any) {
+    // ✅ Restauration en cas d'erreur aussi
+    console.log = originalConsoleLog;
+    
+    log(sid, `❌ Erreur globale: ${error.message}`);
+    originalConsoleLog('Search error:', error);
+    
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Erreur lors du scraping'
+    });
   }
 });
 
-/* =========================
- *  EXPORT XLSX
- * ========================= */
-app.post('/api/download/xlsx', async (req: Request, res: Response) => {
+// ============================================
+// 📊 ENDPOINT : EXPORT XLSX
+// ============================================
+app.post('/api/download/xlsx', async (req: Request, res: Response): Promise<void> => {
   const { what, where = '', maxPages = 3 } = req.body;
-
+  
+  if (!what) {
+    res.status(400).json({ error: 'Paramètre "what" requis' });
+    return;
+  }
+  
   try {
-    const spResults = await scrapeServicePublic(what, where, maxPages);
-    const msResults = await scrapeMaSecurite(what, where);
-
-    const allRows = [
-      ...spResults.map(r => ({ ...r, source: 'Service-Public' })),
-      ...msResults.map(r => ({ ...r, source: 'MaSécurité' })),
+    const servicePublicData = await scrapeServicePublic(what, where, maxPages);
+    const maSecuriteData = await scrapeMaSecurite(what, where);
+    
+    const allData = [
+      ...servicePublicData.map(r => ({
+        Source: 'Service-Public',
+        Nom: r.nom,
+        Adresse: r.adresse,
+        Téléphone: r.telephone,
+        Email: r.email || '',
+        Site: r.site || '',
+        Région: r.region || '',
+        Latitude: r.latitude || '',
+        Longitude: r.longitude || '',
+        URL: r.url || ''
+      })),
+      ...maSecuriteData.map(r => ({
+        Source: 'MaSécurité',
+        Nom: r.nom,
+        Adresse: r.adresse,
+        Téléphone: r.telephone,
+        Email: '',
+        Site: '',
+        Région: '',
+        Latitude: '',
+        Longitude: '',
+        URL: '',
+        Statut: r.statut || '',
+        Type: r.type || ''
+      }))
     ];
-
-    const ws = XLSX.utils.json_to_sheet(allRows);
+    
+    const ws = XLSX.utils.json_to_sheet(allData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Résultats');
+    
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-
-    res.setHeader('Content-Disposition', `attachment; filename="annuaire_${what.replace(/\s+/g, '_')}.xlsx"`);
+    
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="annuaire_${what.replace(/\s+/g, '_')}.xlsx"`);
     res.send(buffer);
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    
+  } catch (error: any) {
+    originalConsoleLog('XLSX error:', error);
+    res.status(500).json({ error: error.message || 'Erreur export XLSX' });
   }
 });
 
-/* =========================
- *  HELPERS
- * ========================= */
+// ============================================
+// 🏠 FALLBACK : ANGULAR SPA
+// ============================================
+app.get('*', (req: Request, res: Response) => {
+  res.sendFile(path.join(distFolder, 'index.html'));
+});
+
+// ============================================
+// 🚀 DÉMARRAGE DU SERVEUR
+// ============================================
+app.listen(port, '0.0.0.0', () => {
+  console.log('');
+  console.log('╔════════════════════════════════════════╗');
+  console.log('║   ✅ SERVER STARTED SUCCESSFULLY      ║');
+  console.log('╚════════════════════════════════════════╝');
+  console.log(`   🌐 URL: http://localhost:${port}`);
+  console.log(`   📂 Serving: ${distFolder}`);
+  console.log('');
+}).on('error', (err: any) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error('');
+    console.error('╔════════════════════════════════════════╗');
+    console.error('║   ❌ PORT ALREADY IN USE              ║');
+    console.error('╚════════════════════════════════════════╝');
+    console.error(`   Port ${port} is already in use`);
+    console.error('   Run: lsof -i :3000 to find the process');
+    console.error('');
+  } else {
+    console.error('❌ Server error:', err);
+  }
+  process.exit(1);
+});
+
+// ============================================
+// 🛠️ FONCTIONS UTILITAIRES
+// ============================================
 function extractVille(adresse: string): string {
-  const match = adresse.match(/\d{5}\s+(.+?)$/);
-  return match ? match[1].trim() : '';
+  if (!adresse) return '';
+  
+  const match = adresse.match(/\d{5}\s+(.+?)(?:\s|$)/);
+  if (match) {
+    return match[1].trim();
+  }
+  
+  const parts = adresse.split(' ');
+  return parts[parts.length - 1];
 }
+
 function detectType(nom: string): string {
   const lower = nom.toLowerCase();
   if (lower.includes('commissariat')) return 'Commissariat';
   if (lower.includes('gendarmerie')) return 'Gendarmerie';
+  if (lower.includes('police')) return 'Police';
+  if (lower.includes('peloton')) return 'Peloton';
+  if (lower.includes('brigade')) return 'Brigade';
   if (lower.includes('mairie')) return 'Mairie';
   if (lower.includes('préfecture')) return 'Préfecture';
-  if (lower.includes('police')) return 'Police';
   return 'Autre';
 }
-
-/* =========================
- *  FALLBACK ANGULAR
- * ========================= */
-app.get('*', (_req: Request, res: Response) => {
-  res.sendFile(path.join(distFolder, 'index.html'));
-});
-
-/* =========================
- *  START (avec ta bannière)
- * ========================= */
-app.listen(port, '0.0.0.0', () => {
-  console.log('\n╔════════════════════════════════════════╗');
-  console.log('║ 🚀 SERVEUR SCRAPER UNIFIÉ              ║');
-  console.log('╚════════════════════════════════════════╝');
-  console.log(`\n✅ Serveur sur http://0.0.0.0:${port}`);
-  console.log(`📍 Routes API:`);
-  console.log(`   - GET  /api/health`);
-  console.log(`   - GET  /api/logs/:sessionId  (SSE)`);
-  console.log(`   - POST /api/search`);
-  console.log(`   - POST /api/download/xlsx`);
-  console.log(`💡 CTRL+C pour arrêter\n`);
-});

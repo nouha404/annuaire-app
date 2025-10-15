@@ -20,7 +20,9 @@ async function createDriver(): Promise<WebDriver> {
     '--disable-dev-shm-usage',
     '--disable-gpu',
     '--window-size=1920,1080',
-    '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    '--disable-images', // ⚡ Pas d'images
+    '--disable-css' // ⚡ Pas de CSS
   );
 
   const chromeBin = process.env['CHROME_BIN'];
@@ -34,9 +36,6 @@ async function createDriver(): Promise<WebDriver> {
     .build();
 }
 
-/**
- * Extrait les résultats de la liste affichée
- */
 async function extractResults(driver: WebDriver): Promise<MaSecuriteRow[]> {
   const results: MaSecuriteRow[] = [];
 
@@ -47,10 +46,10 @@ async function extractResults(driver: WebDriver): Promise<MaSecuriteRow[]> {
     console.log('      ⏳ Attente de la liste de résultats...');
     await driver.wait(
       until.elementLocated(By.css('ul#results-point-list')),
-      10000
+      5000 // ⚡ Réduit de 10000 à 5000
     );
 
-    await driver.sleep(2000);
+    await driver.sleep(800); // ⚡ Réduit de 2000 à 800
 
     const noResults = await driver.findElements(By.css('#no-results-point-list:not(.fr-hidden)'));
     if (noResults.length > 0) {
@@ -62,32 +61,38 @@ async function extractResults(driver: WebDriver): Promise<MaSecuriteRow[]> {
     
     if (items.length === 0) {
       console.log('      ⚠️  Liste trouvée mais aucun item dedans');
-      const listHtml = await driver.executeScript(`
-        const list = document.querySelector('ul#results-point-list');
-        return list ? list.innerHTML.substring(0, 300) : 'Liste introuvable';
-      `);
-      console.log('      🔍 HTML:', listHtml);
       return [];
     }
     
     console.log(`      → ${items.length} établissement(s) dans la liste`);
 
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      try {
-        const data: MaSecuriteRow = {
-          nom: '',
-          adresse: '',
-          telephone: '',
-          statut: '',
-          type: '',
-          ville: ''
-        };
-
+    // ⚡ EXTRACTION PARALLÈLE
+    const itemsData = await Promise.all(
+      items.map(async (item, i) => {
         try {
-          const nomElement = await item.findElement(By.css('h2.point-label'));
-          data.nom = (await nomElement.getText()).trim();
-          
+          const data: MaSecuriteRow = {
+            nom: '',
+            adresse: '',
+            telephone: '',
+            statut: '',
+            type: '',
+            ville: ''
+          };
+
+          // Extraction parallèle de tous les champs
+          const [nomText, addrText, phoneText, statutText] = await Promise.all([
+            item.findElement(By.css('h2.point-label')).then(el => el.getText()).catch(() => ''),
+            item.findElement(By.css('a.point-address')).then(el => el.getText()).catch(() => ''),
+            item.findElement(By.css('.point-phone a')).then(el => el.getText()).catch(() => ''),
+            item.findElement(By.css('.opening-time-badge')).then(el => el.getText()).catch(() => '')
+          ]);
+
+          data.nom = nomText.trim();
+          data.adresse = addrText.trim();
+          data.telephone = phoneText.trim().replace(/\s/g, '');
+          data.statut = statutText.trim();
+
+          // Type
           const nomLower = data.nom.toLowerCase();
           if (nomLower.includes('commissariat')) {
             data.type = 'Commissariat';
@@ -100,59 +105,41 @@ async function extractResults(driver: WebDriver): Promise<MaSecuriteRow[]> {
           } else {
             data.type = 'Service de sécurité';
           }
-        } catch (e) {
-          console.log(`      ⚠️  Item ${i+1}: Impossible de lire le nom`);
-        }
 
-        try {
-          const addrElement = await item.findElement(By.css('a.point-address'));
-          const fullAddress = (await addrElement.getText()).trim();
-          data.adresse = fullAddress;
-          
-          const match = fullAddress.match(/(\d{5})\s+(.+?)$/);
+          // Ville
+          const match = data.adresse.match(/(\d{5})\s+(.+?)$/);
           if (match) {
             data.ville = match[2].trim();
           }
-        } catch (e) {}
 
-        try {
-          const phoneElement = await item.findElement(By.css('.point-phone a'));
-          data.telephone = (await phoneElement.getText()).trim().replace(/\s/g, '');
-        } catch (e) {}
+          if (data.nom && data.nom.length > 3) {
+            console.log(`      ✅ [${i+1}/${items.length}] ${data.nom.substring(0, 50)}`);
+            return data;
+          } else {
+            console.log(`      ⚠️  [${i+1}/${items.length}] Item ignoré (nom invalide)`);
+            return null;
+          }
 
-        try {
-          const statutElement = await item.findElement(By.css('.opening-time-badge'));
-          data.statut = (await statutElement.getText()).trim();
-        } catch (e) {}
-
-        if (data.nom && data.nom.length > 3) {
-          results.push(data);
-          console.log(`      ✅ [${i+1}/${items.length}] ${data.nom.substring(0, 50)}`);
-        } else {
-          console.log(`      ⚠️  [${i+1}/${items.length}] Item ignoré (nom invalide)`);
+        } catch (e) {
+          console.log(`      ❌ [${i+1}/${items.length}] Erreur:`, (e as Error).message);
+          return null;
         }
+      })
+    );
 
-      } catch (e) {
-        console.log(`      ❌ [${i+1}/${items.length}] Erreur:`, (e as Error).message);
-      }
-    }
+    // Filtrer les null
+    itemsData.forEach(data => {
+      if (data) results.push(data);
+    });
 
   } catch (e) {
     console.error('      ❌ Erreur extraction:', (e as Error).message);
-    
-    try {
-      const screenshot = await driver.takeScreenshot();
-      console.log('      📸 Screenshot capturé (base64, premiers 100 chars):', screenshot.substring(0, 100));
-    } catch (screenshotError) {}
   }
 
   console.log(`      📊 Total extrait: ${results.length} établissements valides`);
   return results;
 }
 
-/**
- * Fonction interne qui effectue le scraping avec un driver garanti existant
- */
 async function scrapeWithDriver(
   driver: WebDriver,
   searchTerm: string,
@@ -162,43 +149,12 @@ async function scrapeWithDriver(
 
   console.log('   🌐 Accès au site...');
   await driver.get(BASE);
-  await driver.sleep(4000);
+  await driver.sleep(1500); // ⚡ Réduit de 4000 à 1500
 
-  // ===== FERMETURE COMPLÈTE DU MODAL DE COOKIES =====
+  // Gestion cookies - RAPIDE
   console.log('   🍪 Gestion des cookies...');
   try {
-    const acceptAllBtn = await driver.findElements(
-      By.css('#tarteaucitronPersonalize2, #tarteaucitronAllAllowed, #tarteaucitronAllDenied2')
-    );
-    if (acceptAllBtn.length > 0) {
-      for (const btn of acceptAllBtn) {
-        try {
-          if (await btn.isDisplayed()) {
-            console.log('      → Clic sur bouton cookies');
-            await driver.executeScript('arguments[0].click();', btn);
-            await driver.sleep(1500);
-            break;
-          }
-        } catch (e) {}
-      }
-    }
-
-    const closeAlert = await driver.findElements(
-      By.css('#tarteaucitronCloseAlert, button[aria-controls="tarteaucitronAlertBig"]')
-    );
-    if (closeAlert.length > 0) {
-      for (const btn of closeAlert) {
-        try {
-          if (await btn.isDisplayed()) {
-            console.log('      → Fermeture de la bannière');
-            await driver.executeScript('arguments[0].click();', btn);
-            await driver.sleep(1000);
-            break;
-          }
-        } catch (e) {}
-      }
-    }
-
+    // ⚡ Suppression directe par JS sans attendre les boutons
     await driver.executeScript(`
       const selectorsToRemove = [
         '#tarteaucitronRoot',
@@ -220,12 +176,10 @@ async function scrapeWithDriver(
       
       document.body.style.overflow = 'auto';
       document.body.style.position = 'static';
-      
-      console.log('Overlays cookies supprimés');
     `);
     
-    console.log('   ✅ Cookies gérés (overlays supprimés)');
-    await driver.sleep(1000);
+    console.log('   ✅ Cookies gérés');
+    await driver.sleep(300); // ⚡ Réduit de 1000 à 300
     
   } catch (e) {
     console.log('   ⚠️  Problème cookies:', (e as Error).message);
@@ -234,7 +188,7 @@ async function scrapeWithDriver(
   // Trouver le champ de recherche
   let searchInput;
   try {
-    await driver.wait(until.elementLocated(By.css('input#inputCiat')), 10000);
+    await driver.wait(until.elementLocated(By.css('input#inputCiat')), 5000); // ⚡ Réduit de 10000 à 5000
     searchInput = await driver.findElement(By.css('input#inputCiat'));
     
     const isDisplayed = await searchInput.isDisplayed();
@@ -246,7 +200,6 @@ async function scrapeWithDriver(
     }
   } catch (e) {
     console.log('   ❌ Champ de recherche introuvable ou non interactif');
-    console.log('   💡 Le site a peut-être changé de structure');
     return [];
   }
 
@@ -256,52 +209,47 @@ async function scrapeWithDriver(
   const isOrgType = /commissariat|gendarmerie|police|mairie|préfecture/i.test(searchTerm);
   if (isOrgType && !location) {
     console.log('   ⚠️ MaSécurité nécessite une localisation (ville/code postal)');
-    console.log('   💡 Ajoutez un paramètre "where" pour obtenir des résultats\n');
     return [];
   }
   
   console.log(`   ⌨️  Saisie: "${query}"`);
   
-  // Scroller vers le champ et l'activer via JavaScript
+  // Scroller et activer
   try {
     await driver.executeScript(`
       const input = arguments[0];
-      input.scrollIntoView({block: 'center', behavior: 'smooth'});
-    `, searchInput);
-    await driver.sleep(500);
-    
-    await driver.executeScript(`
-      const input = arguments[0];
+      input.scrollIntoView({block: 'center', behavior: 'auto'});
       input.focus();
       input.click();
     `, searchInput);
-    await driver.sleep(500);
+    await driver.sleep(200); // ⚡ Réduit de 500 à 200
     
     console.log('   ✅ Champ activé');
   } catch (e) {
     console.log('   ⚠️  Erreur activation:', (e as Error).message);
   }
   
-  // Vider et taper caractère par caractère
+  // Vider et taper
   await searchInput.clear();
-  await driver.sleep(300);
+  await driver.sleep(100); // ⚡ Réduit de 300 à 100
   
+  // ⚡ Taper plus vite
   for (const char of query) {
     await searchInput.sendKeys(char);
-    await driver.sleep(150);
+    await driver.sleep(50); // ⚡ Réduit de 150 à 50
   }
   
-  console.log('   ⏳ Attente des suggestions (15s max)...');
+  console.log('   ⏳ Attente des suggestions...');
   
-  // Attendre que la liste devienne visible
+  // Attendre les suggestions
   let suggestions;
   try {
     await driver.wait(async () => {
       const list = await driver.findElements(By.css('ul#map-point-autocomplete-list:not([hidden])'));
       return list.length > 0;
-    }, 15000);
+    }, 8000); // ⚡ Réduit de 15000 à 8000
     
-    await driver.sleep(1500);
+    await driver.sleep(500); // ⚡ Réduit de 1500 à 500
     
     suggestions = await driver.findElements(
       By.css('ul#map-point-autocomplete-list li.list-group-item[role="option"]')
@@ -309,22 +257,8 @@ async function scrapeWithDriver(
     
     console.log(`   📋 ${suggestions.length} suggestion(s) trouvée(s)`);
     
-    if (suggestions.length === 0) {
-      const listHtml = await driver.executeScript(`
-        const list = document.querySelector('ul#map-point-autocomplete-list');
-        return list ? list.outerHTML.substring(0, 500) : 'Liste introuvable';
-      `);
-      console.log('   🔍 HTML de la liste:', listHtml);
-    }
-    
   } catch (e) {
     console.log('   ⚠️ Timeout : aucune suggestion trouvée');
-    console.log('   💡 La ville/code postal n\'existe peut-être pas');
-    
-    const pageSource = await driver.getPageSource();
-    if (pageSource.includes('Aucun résultat') || pageSource.includes('aucune suggestion')) {
-      console.log('   💡 Confirmation : pas de résultats pour cette recherche\n');
-    }
     return [];
   }
 
@@ -333,7 +267,7 @@ async function scrapeWithDriver(
     return [];
   }
 
-  // Cliquer sur la PREMIÈRE suggestion
+  // Cliquer sur la première suggestion
   try {
     const firstSuggestion = suggestions[0];
     const suggestionText = (await firstSuggestion.getText()).trim();
@@ -343,12 +277,12 @@ async function scrapeWithDriver(
       const suggestion = arguments[0];
       suggestion.scrollIntoView({block: 'center'});
     `, firstSuggestion);
-    await driver.sleep(500);
+    await driver.sleep(200); // ⚡ Réduit de 500 à 200
     
     await driver.executeScript('arguments[0].click();', firstSuggestion);
     
     console.log('   ⏳ Chargement des résultats...');
-    await driver.sleep(5000);
+    await driver.sleep(2000); // ⚡ Réduit de 5000 à 2000
 
     const pageResults = await extractResults(driver);
     console.log(`   ✅ ${pageResults.length} établissement(s) récupéré(s)`);
@@ -367,9 +301,6 @@ async function scrapeWithDriver(
   return allResults;
 }
 
-/**
- * Fonction principale exportée
- */
 export async function scrapeMaSecurite(
   searchTerm: string,
   location = ''
@@ -384,8 +315,6 @@ export async function scrapeMaSecurite(
 
   try {
     driver = await createDriver();
-    
-    // ✅ Driver garanti existant, TypeScript est content
     return await scrapeWithDriver(driver, searchTerm, location);
 
   } catch (error) {

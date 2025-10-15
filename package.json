@@ -1,13 +1,14 @@
 {
   "name": "annuaire-app",
   "version": "1.0.0",
-  "scripts": {
+   "scripts": {
     "ng": "ng",
     "start": "node dist/server.js",
     "build": "ng build --configuration production",
-    "build:server": "tsc server.ts --outDir dist --module commonjs --target ES2020 --esModuleInterop --skipLibCheck --resolveJsonModule --moduleResolution node",
-    "serve": "npm run build && npm run build:server && node dist/server.js",
-    "dev": "ng serve --proxy-config proxy.conf.json"
+    "build:server": "tsc -p tsconfig.server.json",
+    "serve": "npm run build && npm run build:server && npm start",
+    "dev": "ng serve --proxy-config proxy.conf.json",
+    "dev:server": "ts-node server.ts"
   },
   "private": true,
   "dependencies": {
