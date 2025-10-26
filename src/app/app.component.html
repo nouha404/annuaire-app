@@ -61,6 +61,15 @@
 
           <button 
             type="button"
+            (click)="onSearchForceRefresh()"
+            [disabled]="isLoading || !what.trim()"
+            class="px-6 py-3 bg-orange-600 text-white font-semibold rounded-xl hover:bg-orange-700 disabled:opacity-50 transition-all"
+            title="Ignorer le cache et actualiser les données">
+            🔄 Actualiser
+          </button>
+
+          <button 
+            type="button"
             (click)="onExportCsv()"
             [disabled]="currentRows.length === 0 || isLoading"
             class="px-6 py-3 bg-emerald-600 text-white font-semibold rounded-xl hover:bg-emerald-700 disabled:opacity-50 transition-all">
@@ -94,6 +103,61 @@
           </span>
         </div>
       </form>
+    </div>
+
+    <!-- 📜 HISTORIQUE DES RECHERCHES -->
+    <div class="bg-white rounded-2xl shadow-lg p-6 mb-8">
+      <div class="flex items-center justify-between mb-4">
+        <button 
+          (click)="toggleHistory()"
+          class="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          <span class="font-semibold">Historique des recherches ({{searchHistory.length}})</span>
+          <svg class="w-4 h-4 transition-transform" [class.rotate-180]="showHistory" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+          </svg>
+        </button>
+        
+        <button 
+          *ngIf="searchHistory.length > 0"
+          (click)="clearHistory()"
+          class="text-sm text-red-600 hover:text-red-700 transition-colors">
+          🗑️ Effacer l'historique
+        </button>
+      </div>
+
+      <div *ngIf="showHistory" class="space-y-2">
+        <div *ngIf="searchHistory.length === 0" class="text-center py-8 text-gray-500">
+          <svg class="w-12 h-12 mx-auto mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          <p>Aucun historique</p>
+        </div>
+
+        <div 
+          *ngFor="let entry of searchHistory; let i = index"
+          (click)="loadFromHistory(entry)"
+          class="flex items-center justify-between p-4 border-2 border-gray-200 rounded-xl hover:border-blue-500 hover:bg-blue-50 cursor-pointer transition-all group">
+          
+          <div class="flex-1">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="font-semibold text-gray-900">{{entry.what}}</span>
+              <span *ngIf="entry.where" class="text-sm text-gray-500">• {{entry.where}}</span>
+            </div>
+            <div class="flex items-center gap-3 text-xs text-gray-500">
+              <span>{{entry.resultCount}} résultats</span>
+              <span>•</span>
+              <span>{{formatDate(entry.date)}}</span>
+            </div>
+          </div>
+
+          <svg class="w-5 h-5 text-gray-400 group-hover:text-blue-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+          </svg>
+        </div>
+      </div>
     </div>
 
     <!-- 🔥 ZONE DE LOGS EN TEMPS RÉEL -->

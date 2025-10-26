@@ -27,40 +27,37 @@ export interface SearchResponse {
     maSecurite: number;
   };
   sessionId: string;
+  fromCache?: boolean;
+  cacheAge?: number;
 }
 
 @Injectable({ providedIn: 'root' })
 export class AnnuaireService {
-  // ✅ base vide => appels relatifs sur le même domaine (Railway)
   private readonly base = '';
-
   private logSubject = new Subject<string>();
   public logs$ = this.logSubject.asObservable();
   private eventSource: EventSource | null = null;
 
   constructor(private http: HttpClient) {}
 
-  /** Démarre l'écoute des logs SSE */
   startListeningLogs(sessionId: string): void {
-    this.stopListeningLogs(); // Arrêter l'ancien si existe
-    // ✅ URL relative (pas de localhost)
+    this.stopListeningLogs();
     this.eventSource = new EventSource(`${this.base}/api/logs/${sessionId}`);
-
+    
     this.eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'log') this.logSubject.next(data.message);
       } catch (e) {
-        // on ne relance pas la SSE pour un log malformé
+        // Ignorer les logs malformés
       }
     };
-
+    
     this.eventSource.onerror = () => {
       this.stopListeningLogs();
     };
   }
 
-  /** Arrête l'écoute des logs */
   stopListeningLogs(): void {
     if (this.eventSource) {
       this.eventSource.close();
@@ -68,33 +65,32 @@ export class AnnuaireService {
     }
   }
 
-  /** Recherche unifiée avec génération de sessionId */
-  async search(what: string, where: string, maxPages: number): Promise<SearchResponse> {
+  async search(
+    what: string, 
+    where: string, 
+    maxPages: number,
+    forceRefresh = false
+  ): Promise<SearchResponse> {
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     this.startListeningLogs(sessionId);
 
     try {
-      // ✅ URL relative (pas de localhost)
       const response = await this.http.post<SearchResponse>(
         `${this.base}/api/search`,
-        { what, where, maxPages, sessionId }
+        { what, where, maxPages, sessionId, forceRefresh }
       ).toPromise();
-
       return response!;
     } finally {
       setTimeout(() => this.stopListeningLogs(), 30000);
     }
   }
 
-  /** Téléchargement XLSX */
   async downloadXlsx(what: string, where: string, maxPages: number): Promise<Blob> {
-    // ✅ URL relative (pas de localhost)
     const response = await this.http.post(
       `${this.base}/api/download/xlsx`,
       { what, where, maxPages },
       { responseType: 'blob' }
     ).toPromise();
-
     return response!;
   }
 }

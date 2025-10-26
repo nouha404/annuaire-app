@@ -4,6 +4,13 @@ import { Subscription } from 'rxjs';
 
 type TabId = 'service-public' | 'masecurite';
 
+interface SearchHistoryEntry {
+  what: string;
+  where: string;
+  date: string;
+  resultCount: number;
+}
+
 @Component({
   selector: 'app-root',
   templateUrl: './app.component.html',
@@ -13,7 +20,7 @@ export class AppComponent implements OnInit, OnDestroy {
   title = 'annuaire-app';
   what = '';
   where = '';
-  maxPages = 999; // ✅ Fixé en dur, plus de sélection utilisateur
+  maxPages = 999;
   
   // Système d'onglets
   activeTab: TabId = 'service-public';
@@ -44,14 +51,16 @@ export class AppComponent implements OnInit, OnDestroy {
   showLogs = true;
   private logSubscription?: Subscription;
 
+  // 📜 HISTORIQUE DES RECHERCHES
+  searchHistory: SearchHistoryEntry[] = [];
+  showHistory = false;
+
   constructor(private api: AnnuaireService) {}
 
   ngOnInit() {
-    // S'abonner aux logs
     this.logSubscription = this.api.logs$.subscribe((log: string) => {
       this.logs.push(log);
       
-      // Auto-scroll vers le bas
       setTimeout(() => {
         const logsContainer = document.getElementById('logs-container');
         if (logsContainer) {
@@ -59,11 +68,12 @@ export class AppComponent implements OnInit, OnDestroy {
         }
       }, 100);
       
-      // Limiter à 200 lignes pour éviter la surcharge
       if (this.logs.length > 200) {
         this.logs = this.logs.slice(-200);
       }
     });
+
+    this.loadSearchHistory();
   }
 
   ngOnDestroy() {
@@ -74,7 +84,6 @@ export class AppComponent implements OnInit, OnDestroy {
     this.stopTimer();
   }
 
-  // Getter pour les résultats de l'onglet actif
   get currentRows(): Row[] {
     return this.activeTab === 'service-public' 
       ? this.rowsServicePublic 
@@ -108,17 +117,88 @@ export class AppComponent implements OnInit, OnDestroy {
     }
   }
 
-  // Changer d'onglet
+  // 📜 Gestion de l'historique
+  private loadSearchHistory() {
+    try {
+      const saved = localStorage.getItem('search-history');
+      if (saved) {
+        this.searchHistory = JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error('Erreur chargement historique:', e);
+    }
+  }
+
+  private saveToHistory(what: string, where: string, resultCount: number) {
+    const entry: SearchHistoryEntry = {
+      what,
+      where,
+      date: new Date().toISOString(),
+      resultCount
+    };
+
+    this.searchHistory = this.searchHistory.filter(
+      h => !(h.what === what && h.where === where)
+    );
+
+    this.searchHistory.unshift(entry);
+
+    if (this.searchHistory.length > 10) {
+      this.searchHistory = this.searchHistory.slice(0, 10);
+    }
+
+    try {
+      localStorage.setItem('search-history', JSON.stringify(this.searchHistory));
+    } catch (e) {
+      console.error('Erreur sauvegarde historique:', e);
+    }
+  }
+
+  clearHistory() {
+    if (confirm('Voulez-vous vraiment effacer tout l\'historique ?')) {
+      this.searchHistory = [];
+      localStorage.removeItem('search-history');
+    }
+  }
+
+  toggleHistory() {
+    this.showHistory = !this.showHistory;
+  }
+
+  loadFromHistory(entry: SearchHistoryEntry) {
+    this.what = entry.what;
+    this.where = entry.where;
+    this.showHistory = false;
+  }
+
+  formatDate(dateStr: string): string {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    
+    if (minutes < 1) return 'À l\'instant';
+    if (minutes < 60) return `Il y a ${minutes} min`;
+    if (hours < 24) return `Il y a ${hours}h`;
+    if (days < 7) return `Il y a ${days}j`;
+    
+    return date.toLocaleDateString('fr-FR', { 
+      day: 'numeric', 
+      month: 'short' 
+    });
+  }
+
   switchTab(tab: TabId) {
     this.activeTab = tab;
   }
 
-  // Toggle logs
   toggleLogs() {
     this.showLogs = !this.showLogs;
   }
 
-  // Clear logs
   clearLogs() {
     this.logs = [];
   }
@@ -129,7 +209,6 @@ export class AppComponent implements OnInit, OnDestroy {
       return;
     }
 
-    // Reset
     this.errorServicePublic = '';
     this.errorMaSecurite = '';
     this.rowsServicePublic = [];
@@ -140,25 +219,31 @@ export class AppComponent implements OnInit, OnDestroy {
     this.showLogs = true;
     this.totalDuration = 0;
     
-    // ⏱️ Démarrer le chronomètre
     this.startTimer();
 
     try {
-      this.loadingStep = '📡 Initialisation du scraping...';
+      this.loadingStep = '📡 Vérification du cache...';
       this.progress = 5;
 
       const resp = await this.api.search(
         this.what.trim(),
         this.where.trim(),
-        this.maxPages
+        this.maxPages,
+        false
       );
 
-      // Séparer les résultats par source
       this.rowsServicePublic = resp.rows.filter(r => r.source === 'Service-Public');
       this.rowsMaSecurite = resp.rows.filter(r => r.source !== 'Service-Public');
 
       this.progress = 100;
-      this.loadingStep = `✅ ${resp.rows.length} résultats trouvés !`;
+      
+      if (resp.fromCache) {
+        this.loadingStep = `💾 ${resp.rows.length} résultats (cache, ${resp.cacheAge}s)`;
+      } else {
+        this.loadingStep = `✅ ${resp.rows.length} résultats trouvés !`;
+      }
+
+      this.saveToHistory(this.what.trim(), this.where.trim(), resp.rows.length);
 
       console.log(`✅ Service-Public: ${this.rowsServicePublic.length}`);
       console.log(`✅ MaSécurité: ${this.rowsMaSecurite.length}`);
@@ -171,12 +256,59 @@ export class AppComponent implements OnInit, OnDestroy {
     } finally {
       this.loadingServicePublic = false;
       this.loadingStep = '';
-      // ⏱️ Arrêter le chronomètre
       this.stopTimer();
     }
   }
 
-  // Export CSV de l'onglet actif
+  async onSearchForceRefresh() {
+    if (!this.what.trim()) {
+      this.errorServicePublic = 'Veuillez entrer un terme de recherche';
+      return;
+    }
+
+    this.errorServicePublic = '';
+    this.errorMaSecurite = '';
+    this.rowsServicePublic = [];
+    this.rowsMaSecurite = [];
+    this.logs = [];
+    this.loadingServicePublic = true;
+    this.progress = 0;
+    this.showLogs = true;
+    this.totalDuration = 0;
+    
+    this.startTimer();
+
+    try {
+      this.loadingStep = '🔄 Actualisation forcée...';
+      this.progress = 5;
+
+      const resp = await this.api.search(
+        this.what.trim(),
+        this.where.trim(),
+        this.maxPages,
+        true
+      );
+
+      this.rowsServicePublic = resp.rows.filter(r => r.source === 'Service-Public');
+      this.rowsMaSecurite = resp.rows.filter(r => r.source !== 'Service-Public');
+
+      this.progress = 100;
+      this.loadingStep = `✅ ${resp.rows.length} résultats trouvés (actualisés) !`;
+
+      this.saveToHistory(this.what.trim(), this.where.trim(), resp.rows.length);
+
+      await this.wait(1000);
+
+    } catch (e: any) {
+      this.errorServicePublic = e?.error?.error || e?.message || 'Erreur de recherche';
+      console.error('❌ Erreur:', e);
+    } finally {
+      this.loadingServicePublic = false;
+      this.loadingStep = '';
+      this.stopTimer();
+    }
+  }
+
   async onExportCsv() {
     const rows = this.currentRows;
     if (rows.length === 0) {
@@ -216,7 +348,6 @@ export class AppComponent implements OnInit, OnDestroy {
     }
   }
 
-  // ✅ NOUVEAU: Export CSV fusionné des deux sources
   async onExportCsvFused() {
     const allRows = [...this.rowsServicePublic, ...this.rowsMaSecurite];
     
@@ -247,7 +378,7 @@ export class AppComponent implements OnInit, OnDestroy {
       a.click();
       URL.revokeObjectURL(url);
       
-      console.log(`✅ CSV fusionné exporté: ${allRows.length} lignes (Service-Public: ${this.rowsServicePublic.length}, MaSécurité: ${this.rowsMaSecurite.length})`);
+      console.log(`✅ CSV fusionné exporté: ${allRows.length} lignes`);
     } catch (e) {
       alert('Export CSV fusionné échoué.');
       console.error(e);

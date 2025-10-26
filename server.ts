@@ -42,7 +42,6 @@ console.log('✅ All modules loaded successfully');
 // 🚀 CONFIGURATION EXPRESS
 // ============================================
 const app = express();
-// ✅ RAILWAY CRITICAL: Utiliser le port fourni par Railway
 const port = parseInt(process.env['PORT'] || '3000', 10);
 
 console.log(`🔧 Configured port: ${port}`);
@@ -60,7 +59,8 @@ app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ 
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    cacheSize: searchCache.size
   });
 });
 
@@ -68,7 +68,8 @@ app.get('/api/health', (req: Request, res: Response) => {
   res.status(200).json({ 
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    cacheSize: searchCache.size
   });
 });
 
@@ -78,7 +79,6 @@ app.get('/api/health', (req: Request, res: Response) => {
 const distFolder = path.join(process.cwd(), 'dist/annuaire-app/browser');
 console.log('📂 Angular dist folder:', distFolder);
 
-// Vérifier que le dossier existe
 if (fs.existsSync(distFolder)) {
   console.log('✅ Angular dist folder exists');
   const files = fs.readdirSync(distFolder);
@@ -86,7 +86,6 @@ if (fs.existsSync(distFolder)) {
 } else {
   console.error('❌ Angular dist folder NOT FOUND!');
   console.error('   Expected path:', distFolder);
-  // Lister ce qui existe
   const distRoot = path.join(process.cwd(), 'dist');
   if (fs.existsSync(distRoot)) {
     console.log('📂 Contents of dist/:', fs.readdirSync(distRoot));
@@ -94,6 +93,89 @@ if (fs.existsSync(distFolder)) {
 }
 
 app.use(express.static(distFolder));
+
+// ============================================
+// 💾 SYSTÈME DE CACHE
+// ============================================
+interface UnifiedRow {
+  source: string;
+  nom: string;
+  adresse: string;
+  telephone: string;
+  ville: string;
+  type: string;
+  region?: string;
+  statut?: string;
+  email?: string;
+  site?: string;
+  url?: string;
+  latitude?: string;
+  longitude?: string;
+}
+
+interface CacheEntry {
+  data: UnifiedRow[];
+  timestamp: number;
+  stats: {
+    total: number;
+    servicePublic: number;
+    maSecurite: number;
+  };
+}
+
+const searchCache = new Map<string, CacheEntry>();
+const CACHE_TTL = 3600000; // 1 heure en millisecondes
+
+function getCacheKey(what: string, where: string): string {
+  return `${what.toLowerCase().trim()}|${where.toLowerCase().trim()}`;
+}
+
+function getCachedResult(what: string, where: string): CacheEntry | null {
+  const key = getCacheKey(what, where);
+  const cached = searchCache.get(key);
+  
+  if (!cached) return null;
+  
+  const age = Date.now() - cached.timestamp;
+  if (age > CACHE_TTL) {
+    searchCache.delete(key);
+    return null;
+  }
+  
+  return cached;
+}
+
+function setCachedResult(what: string, where: string, data: UnifiedRow[], stats: any): void {
+  const key = getCacheKey(what, where);
+  searchCache.set(key, {
+    data,
+    timestamp: Date.now(),
+    stats
+  });
+  
+  // Limiter à 100 entrées max
+  if (searchCache.size > 100) {
+    const firstKey = searchCache.keys().next().value;
+    searchCache.delete(firstKey);
+  }
+  
+  originalConsoleLog(`💾 Cache updated: ${key} (${searchCache.size} entries total)`);
+}
+
+// Nettoyer le cache toutes les heures
+setInterval(() => {
+  const now = Date.now();
+  let cleaned = 0;
+  for (const [key, entry] of searchCache.entries()) {
+    if (now - entry.timestamp > CACHE_TTL) {
+      searchCache.delete(key);
+      cleaned++;
+    }
+  }
+  if (cleaned > 0) {
+    originalConsoleLog(`🗑️  Cache cleaned: ${cleaned} expired, ${searchCache.size} remaining`);
+  }
+}, 3600000);
 
 // ============================================
 // 💾 STOCKAGE DES SESSIONS SSE
@@ -112,7 +194,6 @@ function log(sessionId: string, message: string) {
   const timestamp = new Date().toISOString().substring(11, 19);
   const formattedLog = `[${timestamp}] ${message}`;
   
-  // ✅ Utilise la version ORIGINALE pour éviter la boucle infinie
   originalConsoleLog(formattedLog);
   
   const session = sessions.get(sessionId);
@@ -188,24 +269,8 @@ app.get('/api/logs/:sessionId', (req: Request, res: Response) => {
 // ============================================
 // 🔍 ENDPOINT : RECHERCHE UNIFIÉE
 // ============================================
-interface UnifiedRow {
-  source: string;
-  nom: string;
-  adresse: string;
-  telephone: string;
-  ville: string;
-  type: string;
-  region?: string;
-  statut?: string;
-  email?: string;
-  site?: string;
-  url?: string;
-  latitude?: string;
-  longitude?: string;
-}
-
 app.post('/api/search', async (req: Request, res: Response): Promise<void> => {
-  const { what, where = '', maxPages = 999, sessionId } = req.body;
+  const { what, where = '', maxPages = 999, sessionId, forceRefresh = false } = req.body;
   
   if (!what) {
     res.status(400).json({
@@ -221,6 +286,27 @@ app.post('/api/search', async (req: Request, res: Response): Promise<void> => {
     sessions.set(sid, { clients: [], logs: [] });
   }
   
+  // ✅ Vérifier le cache si pas de forceRefresh
+  if (!forceRefresh) {
+    const cached = getCachedResult(what, where);
+    if (cached) {
+      const age = Math.round((Date.now() - cached.timestamp) / 1000);
+      log(sid, `💾 Résultats trouvés en cache (${age}s d'ancienneté)`);
+      
+      res.json({
+        success: true,
+        rows: cached.data,
+        stats: cached.stats,
+        sessionId: sid,
+        fromCache: true,
+        cacheAge: age
+      });
+      return;
+    }
+  } else {
+    log(sid, `🔄 Actualisation forcée (cache ignoré)`);
+  }
+  
   log(sid, `🔍 Nouvelle recherche: "${what}" | Lieu: "${where || 'France entière'}" | Pages: ${maxPages}`);
   
   try {
@@ -231,7 +317,6 @@ app.post('/api/search', async (req: Request, res: Response): Promise<void> => {
     // ==========================================
     log(sid, '📍 [1/2] Scraping Service-Public.fr...');
     
-    // ✅ Redirection PROPRE du console.log
     console.log = (...args: any[]) => {
       const msg = util.format(...args);
       log(sid, msg);
@@ -287,7 +372,6 @@ app.post('/api/search', async (req: Request, res: Response): Promise<void> => {
       log(sid, `❌ Erreur MaSécurité: ${err.message}`);
     }
     
-    // ✅ Restauration du console.log original
     console.log = originalConsoleLog;
     
     // Filtrer les erreurs
@@ -302,19 +386,25 @@ app.post('/api/search', async (req: Request, res: Response): Promise<void> => {
     const servicePublicCount = cleanResults.filter(r => r.source === 'Service-Public').length;
     const maSecuriteCount = cleanResults.filter(r => r.source === 'MaSécurité').length;
     
+    const stats = {
+      total: cleanResults.length,
+      servicePublic: servicePublicCount,
+      maSecurite: maSecuriteCount
+    };
+    
+    // ✅ Sauvegarder en cache
+    setCachedResult(what, where, cleanResults, stats);
+    log(sid, '💾 Résultats mis en cache (1h)');
+    
     res.json({
       success: true,
       rows: cleanResults,
-      stats: {
-        total: cleanResults.length,
-        servicePublic: servicePublicCount,
-        maSecurite: maSecuriteCount
-      },
-      sessionId: sid
+      stats,
+      sessionId: sid,
+      fromCache: false
     });
     
   } catch (error: any) {
-    // ✅ Restauration en cas d'erreur aussi
     console.log = originalConsoleLog;
     
     log(sid, `❌ Erreur globale: ${error.message}`);
@@ -410,6 +500,7 @@ const server = app.listen(port, '0.0.0.0', () => {
   console.log(`   🌐 URL: http://0.0.0.0:${port}`);
   console.log(`   📂 Serving: ${distFolder}`);
   console.log(`   🏥 Healthcheck: http://0.0.0.0:${port}/health`);
+  console.log(`   💾 Cache: ${CACHE_TTL / 1000 / 60} minutes TTL`);
   console.log('');
 });
 
@@ -427,7 +518,6 @@ server.on('error', (err: any) => {
   process.exit(1);
 });
 
-// Gestion propre de l'arrêt
 process.on('SIGTERM', () => {
   console.log('🛑 SIGTERM received, shutting down gracefully...');
   server.close(() => {
